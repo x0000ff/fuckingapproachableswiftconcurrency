@@ -94,8 +94,9 @@ The `MainActor` is a special isolation domain that runs on the main thread. It's
 
 ```swift
 @MainActor
-class ViewModel: ObservableObject {
-    @Published var items: [Item] = []  // UI state lives here
+@Observable
+class ViewModel {
+    var items: [Item] = []  // UI state lives here
 
     func refresh() async {
         let newItems = await fetchItems()
@@ -432,9 +433,10 @@ class ViewModel {
 
 ```swift
 @MainActor
-class ViewModel: ObservableObject {
-    @Published var users: [User] = []
-    @Published var isLoading = false
+@Observable
+class ViewModel {
+    var users: [User] = []
+    var isLoading = false
 
     func fetchUsers() async {
         isLoading = true
