@@ -1,0 +1,24 @@
+{
+  "name": "fuckingapproachableswiftconcurrency",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A no-bullshit guide to Swift concurrency",
+  "scripts": {
+    "dev": "eleventy --serve",
+    "build": "eleventy"
+  },
+  "keywords": [
+    "swift",
+    "concurrency",
+    "async",
+    "await",
+    "actors"
+  ],
+  "author": "",
+  "license": "MIT",
+  "packageManager": "pnpm@10.26.0",
+  "devDependencies": {
+    "@11ty/eleventy": "^3.1.2",
+    "@11ty/eleventy-plugin-syntaxhighlight": "^5.0.2"
+  }
+}

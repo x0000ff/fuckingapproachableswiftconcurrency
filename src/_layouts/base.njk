@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title }} - Fucking Approachable Swift Concurrency</title>
+  <meta name="description" content="{{ description or 'A no-bullshit guide to understanding Swift concurrency. Clear mental models for async/await, actors, and Sendable.' }}">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a href="/" class="logo">Fucking Approachable Swift Concurrency</a>
+      <nav>
+        <a href="#basics">Basics</a>
+        <a href="#async-await">Async/Await</a>
+        <a href="#actors">Actors</a>
+        <a href="#sendable">Sendable</a>
+        <a href="#patterns">Patterns</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    {{ content | safe }}
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>Made with frustration and love. Because Swift concurrency doesn't have to be confusing.</p>
+      <p>Much of this guide is distilled from <a href="https://www.massicotte.org/">Matt Massicotte's</a> excellent work on Swift concurrency.</p>
+      <p class="tribute">This site's name honors the tradition of <a href="https://fuckingblocksyntax.com/">fuckingblocksyntax.com</a> and <a href="https://fuckingifcaseletsyntax.com/">fuckingifcaseletsyntax.com</a>.</p>
+    </div>
+  </footer>
+</body>
+</html>
