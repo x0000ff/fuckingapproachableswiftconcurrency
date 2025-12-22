@@ -9,6 +9,7 @@ description: A no-bullshit guide to Swift concurrency. Learn async/await, actors
     <h1>Fucking Approachable<br><span class="accent">Swift Concurrency</span></h1>
     <p class="subtitle">Finally understand async/await, actors, and Sendable. Clear mental models, no jargon.</p>
     <p class="credit">Huge thanks to <a href="https://www.massicotte.org/">Matt Massicotte</a> for making Swift concurrency understandable.</p>
+    <p class="credit">Put together by <a href="https://pepicrft.me">Pedro Piñera</a>. Found an issue? <a href="mailto:pedro@tuist.dev">pedro@tuist.dev</a></p>
     <p class="tribute">In the tradition of <a href="https://fuckingblocksyntax.com/">fuckingblocksyntax.com</a> and <a href="https://fuckingifcaseletsyntax.com/">fuckingifcaseletsyntax.com</a></p>
   </div>
 </section>
@@ -21,6 +22,8 @@ description: A no-bullshit guide to Swift concurrency. Learn async/await, actors
 There's no cheat sheet for Swift concurrency. Every "just do X" answer is wrong in some context.
 
 **But here's the good news:** Once you understand [isolation](#basics) (5 min read), everything clicks. The compiler errors start making sense. You stop fighting the system and start working with it.
+
+*This guide targets Swift 6+. Most concepts apply to Swift 5.5+, but Swift 6 enforces stricter concurrency checking.*
 
 <a href="#basics" class="read-more">Start with the mental model &darr;</a>
 
@@ -126,12 +129,13 @@ Without actors, two threads read balance = 100, both add 50, both write 150 - yo
 <div class="warning">
 <h4>Don't overuse actors</h4>
 
-You need a custom actor only when all of these are true:
-1. You have mutable state
+You need a custom actor only when **all four** of these are true:
+1. You have non-Sendable (thread-unsafe) mutable state
 2. Multiple places need to access it
-3. It can't just live on MainActor
+3. Operations on that state must be atomic
+4. It can't just live on MainActor
 
-If any condition is false, you probably don't need an actor.
+If any condition is false, you probably don't need an actor. Most UI state can live on `@MainActor`. [Read more about when to use actors](https://www.massicotte.org/actors/).
 </div>
 
 ### Nonisolated: The Hallways
