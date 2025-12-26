@@ -5,10 +5,12 @@ description: Swift 並行処理の嘘偽りないガイド。シンプルなメ�
 lang: ja
 dir: ltr
 nav:
-  isolation: 分離
-  domains: ドメイン
-  patterns: パターン
-  errors: エラー
+  async-await: Async/Await
+  tasks: タスク
+  execution: 分離
+  sendable: Sendable
+  putting-it-together: まとめ
+  mistakes: 落とし穴
 footer:
   madeWith: フラストレーションと愛を込めて作りました。Swift の並行処理が難しい必要はないから。
   viewOnGitHub: GitHub で見る
@@ -17,232 +19,287 @@ footer:
 <section class="hero">
   <div class="container">
     <h1>クソ分かりやすい<br><span class="accent">Swift 並行処理</span></h1>
-    <p class="subtitle">async/await、actors、Sendable を遂に理解しよう。明確なメンタルモデル、専門用語なし。</p>
-    <p class="credit"><a href="https://www.massicotte.org/">Matt Massicotte</a> 氏に多大な感謝を。Swift 並行処理を理解可能にしてくれました。<a href="https://pepicrft.me">Pedro Piñera</a> がまとめました。問題を発見しましたか? <a href="mailto:pedro@tuist.dev">pedro@tuist.dev</a></p>
+    <p class="subtitle">async/await、Tasks、そしてコンパイラがなぜあなたに怒鳴り続けるのかを、ついに理解しよう。</p>
+    <p class="credit"><a href="https://www.massicotte.org/">Matt Massicotte</a> 氏に多大な感謝を。Swift 並行処理を理解可能にしてくれました。<a href="https://pepicrft.me">Pedro Piñera</a> がまとめました。問題を見つけた？ <a href="mailto:pedro@tuist.dev">pedro@tuist.dev</a></p>
     <p class="tribute"><a href="https://fuckingblocksyntax.com/">fuckingblocksyntax.com</a> と <a href="https://fuckingifcaseletsyntax.com/">fuckingifcaseletsyntax.com</a> の伝統を受け継いで</p>
-    <p class="cta-tuist"><a href="https://tuist.dev">Tuist</a> で開発をスケールアップ</p>
   </div>
 </section>
 
-<section class="tldr">
+<section id="async-await">
   <div class="container">
 
-## 正直な真実
+## [非同期コード: async/await](#async-await)
 
-Swift 並行処理にチートシートはありません。「こうすればいい」という答えは、どんな文脈でも間違っています。
+アプリがやることの大半は待つことだ。サーバーからデータを取得する - レスポンスを待つ。ディスクからファイルを読む - バイトを待つ。データベースにクエリする - 結果を待つ。
 
-**でも良いニュースがあります:**[分離](#basics)を理解すれば(5分で読めます)、すべてが理解できます。コンパイラエラーが意味を成し始めます。システムと戦うのをやめ、システムと協力できるようになります。
+Swift の並行処理システム以前は、この待機をコールバック、デリゲート、または [Combine](https://developer.apple.com/documentation/combine) で表現していた。動くけど、ネストしたコールバックは追いづらくなるし、Combine は学習曲線がきつい。
 
-*このガイドは Swift 6+ を対象としています。ほとんどの概念は Swift 5.5+ にも適用されますが、Swift 6 はより厳格な並行処理チェックを強制します。*
+`async/await` は Swift に待機を処理する新しい方法を与える。コールバックの代わりに、シーケンシャルに見えるコードを書く - 一時停止し、待ち、再開する。内部では、Swift のランタイムがこれらの一時停止を効率的に管理する。ただし、待っている間にアプリを実際にレスポンシブに保つかどうかは、コードが*どこで*実行されるかに依存する - これは後で説明する。
 
-<a href="#basics" class="read-more">メンタルモデルから始める &darr;</a>
-
-  </div>
-</section>
-
-<section id="basics">
-  <div class="container">
-
-## 理解すべきただ一つのこと
-
-**[分離](https://www.massicotte.org/intro-to-isolation/)** がすべての鍵です。これは Swift の「今、誰がこのデータに触れることを許可されているか?」という質問への答えです。
-
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-あなたのアプリを**オフィスビル**だと考えてください。各オフィスは**分離ドメイン** - 一度に一人しか作業できないプライベート空間です。他人のオフィスに勝手に入って机を動かすことはできません。
-
-このガイド全体を通じて、この比喩を使って説明していきます。
-</div>
-
-### なぜスレッドだけではダメなのか?
-
-何十年もの間、私たちはスレッドについて考えることで並行処理コードを書いてきました。問題は?**スレッドは自分で自分の足を撃つことを防げません。**二つのスレッドが同じデータに同時にアクセスでき、データレース - ランダムにクラッシュし、ほぼ再現不可能なバグ - を引き起こします。
-
-スマホでは、なんとかなるかもしれません。しかし、何千もの並行リクエストを処理するサーバーでは、データレースは確実に発生します - 通常は本番環境で、金曜日に。Swift がサーバーやその他の高度に並行処理が必要な環境に拡大するにつれて、「うまくいくことを願う」だけでは通用しません。
-
-従来のアプローチは防御的でした: ロックを使い、ディスパッチキューを使い、見落としがないことを願う。
-
-Swift のアプローチは異なります:**コンパイル時にデータレースを不可能にする。**「これはどのスレッド上にあるか?」ではなく、Swift は「今、誰がこのデータに触れることを許可されているか?」と尋ねます。それが分離です。
-
-### 他の言語はこれをどう扱うか
-
-| 言語 | アプローチ | バグに気づくタイミング |
-|----------|----------|------------------------------|
-| **Swift** | 分離 + Sendable | コンパイル時 |
-| **Rust** | 所有権 + borrow checker | コンパイル時 |
-| **Go** | チャネル + race detector | 実行時 (ツールあり) |
-| **Java/Kotlin** | `synchronized`、ロック | 実行時 (クラッシュ) |
-| **JavaScript** | シングルスレッドイベントループ | 完全に回避 |
-| **C/C++** | 手動ロック | 実行時 (未定義動作) |
-
-Swift と Rust は、コンパイル時にデータレースを検出する唯一の主流言語です。トレードオフは?最初の学習曲線が急です。しかし、モデルを理解すれば、コンパイラがサポートしてくれます。
-
-`Sendable` やアクター分離についてのあの煩わしいエラー? それらは、以前はサイレントクラッシュになっていたバグを捕まえています。
-
-  </div>
-</section>
-
-<section id="domains">
-  <div class="container">
-
-## 分離ドメイン
-
-分離(プライベートオフィス)を理解したので、Swift のビルにある異なるタイプのオフィスを見てみましょう。
-
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-- **受付** (`MainActor`) - すべての顧客とのやり取りが行われる場所。一つしかなく、ユーザーが見るすべてを処理します。
-- **部署オフィス** (`actor`) - 経理、法務、人事。各部署には独自のオフィスがあり、独自の機密データを保護しています。
-- **廊下と共有スペース** (`nonisolated`) - 誰でも通れる共有スペース。ここにはプライベートデータはありません。
-</div>
-
-### MainActor: 受付
-
-`MainActor` はメインスレッド上で実行される特別な分離ドメインです。すべての UI 作業はここで行われます。
+**async 関数**は一時停止が必要になるかもしれない関数だ。`async` でマークし、呼び出すときは `await` を使って「これが終わるまでここで一時停止」と言う:
 
 ```swift
-@MainActor
-@Observable
-class ViewModel {
-    var items: [Item] = []  // UI の状態はここに置く
+func fetchUser(id: Int) async throws -> User {
+    let url = URL(string: "https://api.example.com/users/\(id)")!
+    let (data, _) = try await URLSession.shared.data(from: url)  // ここで中断
+    return try JSONDecoder().decode(User.self, from: data)
+}
 
-    func refresh() async {
-        let newItems = await fetchItems()
-        self.items = newItems  // 安全 - MainActor 上にいる
+// 呼び出し
+let user = try await fetchUser(id: 123)
+// ここのコードは fetchUser が完了した後に実行される
+```
+
+各 `await` でコードは一時停止する - これを**中断**と呼ぶ。作業が終わると、コードは中断した場所から正確に再開する。中断は Swift に待っている間に他の作業をする機会を与える。
+
+### *彼ら*を待つ
+
+複数のものを取得する必要がある場合は？一つずつ await できる:
+
+```swift
+let avatar = try await fetchImage("avatar.jpg")
+let banner = try await fetchImage("banner.jpg")
+let bio = try await fetchBio()
+```
+
+でもこれは遅い - 各々が前のものが終わるのを待つ。`async let` を使って並列に実行しよう:
+
+```swift
+func loadProfile() async throws -> Profile {
+    async let avatar = fetchImage("avatar.jpg")
+    async let banner = fetchImage("banner.jpg")
+    async let bio = fetchBio()
+
+    // 3つすべてが並列で取得中！
+    return Profile(
+        avatar: try await avatar,
+        banner: try await banner,
+        bio: try await bio
+    )
+}
+```
+
+各 `async let` はすぐに開始する。`await` が結果を収集する。
+
+<div class="tip">
+<h4>await には async が必要</h4>
+
+`await` は `async` 関数の中でしか使えない。
+</div>
+
+  </div>
+</section>
+
+<section id="tasks">
+  <div class="container">
+
+## [作業の管理: Tasks](#tasks)
+
+**[Task](https://developer.apple.com/documentation/swift/task)** は管理できる非同期作業の単位だ。async 関数を書いてきたけど、Task がそれを実際に実行するものだ。同期コードから非同期コードを開始する方法であり、その作業を制御できる: 結果を待つ、キャンセルする、バックグラウンドで実行させる。
+
+プロフィール画面を作っているとしよう。ビューが表示されたときにアバターを読み込むには、[`.task`](https://developer.apple.com/documentation/swiftui/view/task(priority:_:)) モディファイアを使う。ビューが消えると自動的にキャンセルされる:
+
+```swift
+struct ProfileView: View {
+    @State private var avatar: Image?
+
+    var body: some View {
+        avatar
+            .task { avatar = await downloadAvatar() }
     }
 }
 ```
 
-<div class="tip">
-<h4>迷ったら MainActor を使う</h4>
+ユーザーがプロフィール間を切り替えられる場合は、`.task(id:)` を使って選択が変わったときにリロードする:
 
-ほとんどのアプリでは、ViewModel や UI 関連のクラスに `@MainActor` をマークするのが正しい選択です。パフォーマンスの懸念は通常大げさです - ここから始めて、実際に問題を測定した場合のみ最適化してください。
+```swift
+struct ProfileView: View {
+    var userID: String
+    @State private var avatar: Image?
+
+    var body: some View {
+        avatar
+            .task(id: userID) { avatar = await downloadAvatar(for: userID) }
+    }
+}
+```
+
+ユーザーが「保存」をタップしたら、Task を手動で作成する:
+
+```swift
+Button("Save") {
+    Task { await saveProfile() }
+}
+```
+
+アバター、自己紹介、統計情報を一度に読み込む必要がある場合は？[`TaskGroup`](https://developer.apple.com/documentation/swift/taskgroup) を使って並列に取得する:
+
+```swift
+try await withThrowingTaskGroup(of: Void.self) { group in
+    group.addTask { avatar = try await downloadAvatar(for: userID) }
+    group.addTask { bio = try await fetchBio(for: userID) }
+    group.addTask { stats = try await fetchStats(for: userID) }
+    try await group.waitForAll()
+}
+```
+
+グループ内の Task は**子タスク**であり、親にリンクされている。知っておくべきこと:
+
+- **キャンセルは伝播する**: 親をキャンセルすると、すべての子もキャンセルされる
+- **エラー**: スローされたエラーは兄弟をキャンセルして再スローするが、`next()`、`waitForAll()`、またはイテレーションで結果を消費したときのみ
+- **完了順**: 結果は追加した順ではなく、タスクが完了した順に届く
+- **すべてを待つ**: すべての子が完了するかキャンセルされるまでグループは戻らない
+
+これが**[構造化並行処理](https://developer.apple.com/videos/play/wwdc2021/10134/)**だ: 推論しやすくクリーンアップしやすいツリー構造で組織された作業。
+
+  </div>
+</section>
+
+<section id="execution">
+  <div class="container">
+
+## [どこで実行されるか: スレッドから分離ドメインへ](#execution)
+
+ここまでコードが*いつ*実行されるか（async/await）と*どう組織するか*（Tasks）について話してきた。次は: **どこで実行され、どうやって安全を保つか？**
+
+<div class="tip">
+<h4>ほとんどのアプリはただ待っている</h4>
+
+ほとんどのアプリコードは **I/O バウンド**だ。ネットワークからデータを取得し、レスポンスを *await* し、デコードして、表示する。複数の I/O 操作を調整する必要があれば、*tasks* と *task groups* に頼る。実際の CPU 作業は最小限だ。メインスレッドはこれを問題なく処理できる。なぜなら `await` はブロックせずに中断するから。
+
+でも遅かれ早かれ、**CPU バウンド**な作業に出会う: 巨大な JSON ファイルのパース、画像処理、複雑な計算の実行。この作業は外部の何かを待たない。ただ CPU サイクルが必要なだけだ。メインスレッドで実行すると、UI がフリーズする。ここで「コードがどこで実行されるか」が本当に重要になる。
 </div>
 
-### Actors: 部署オフィス
+### 旧世界: 多くの選択肢、安全性なし
 
-`actor` は部署オフィスのようなものです - 独自のデータを保護し、一度に一人の訪問者しか許可しません。
+Swift の並行処理システム以前は、実行を管理するいくつかの方法があった:
+
+| アプローチ | 何をするか | トレードオフ |
+|----------|--------------|-----------|
+| [Thread](https://developer.apple.com/documentation/foundation/thread) | 直接スレッド制御 | 低レベル、エラーが起きやすい、ほとんど不要 |
+| [GCD](https://developer.apple.com/documentation/dispatch) | クロージャ付きディスパッチキュー | シンプルだがキャンセルなし、スレッド爆発を起こしやすい |
+| [OperationQueue](https://developer.apple.com/documentation/foundation/operationqueue) | タスク依存関係、キャンセル、KVO | より制御できるが冗長で重い |
+| [Combine](https://developer.apple.com/documentation/combine) | リアクティブストリーム | イベントストリームに最適、学習曲線がきつい |
+
+これらはすべて動いたが、安全性は完全に自分次第だった。メインへのディスパッチを忘れたり、二つのキューが同じデータに同時にアクセスしても、コンパイラは助けてくれなかった。
+
+### 問題: データレース
+
+[データレース](https://developer.apple.com/documentation/xcode/data-race)は、二つのスレッドが同じメモリに同時にアクセスし、少なくとも一方が書き込んでいるときに起こる:
+
+```swift
+var count = 0
+
+DispatchQueue.global().async { count += 1 }
+DispatchQueue.global().async { count += 1 }
+
+// 未定義動作: クラッシュ、メモリ破損、または間違った値
+```
+
+データレースは未定義動作だ。クラッシュしたり、メモリを破損したり、静かに間違った結果を生成したりする。テストではアプリが問題なく動き、本番環境でランダムにクラッシュする。ロックやセマフォなどの従来のツールは助けになるが、手動でエラーが起きやすい。
+
+<div class="warning">
+<h4>並行処理は問題を増幅する</h4>
+
+アプリの並行度が高いほど、データレースの可能性が高くなる。シンプルな iOS アプリはずさんなスレッドセーフティでも何とかなるかもしれない。何千もの同時リクエストを処理する Web サーバーは常にクラッシュする。これが Swift のコンパイル時安全性が高並行環境で最も重要な理由だ。
+</div>
+
+### シフト: スレッドから分離へ
+
+Swift の並行処理モデルは異なる質問をする。「どのスレッドで実行すべきか？」ではなく、**「誰がこのデータにアクセスすることを許可されているか？」**と尋ねる。
+
+これが[分離](https://developer.apple.com/documentation/swift/isolation)だ。手動で作業をスレッドにディスパッチする代わりに、データの周りに境界を宣言する。コンパイラがこれらの境界をランタイムではなくビルド時に強制する。
+
+<div class="tip">
+<h4>内部の仕組み</h4>
+
+Swift 並行処理は [libdispatch](https://github.com/swiftlang/swift-corelibs-libdispatch)（GCD と同じランタイム）の上に構築されている。違いはコンパイル時レイヤーだ: アクターと分離はコンパイラによって強制され、ランタイムは CPU のコア数に制限された[協調スレッドプール](https://developer.apple.com/videos/play/wwdc2021/10254/)でスケジューリングを処理する。
+</div>
+
+### 三つの分離ドメイン
+
+**1. MainActor**
+
+[`@MainActor`](https://developer.apple.com/documentation/swift/mainactor) はメインスレッドの分離ドメインを表す[グローバルアクター](https://developer.apple.com/documentation/swift/globalactor)だ。UI フレームワーク（UIKit、AppKit、SwiftUI）がメインスレッドアクセスを必要とするため、特別だ。
+
+```swift
+@MainActor
+class ViewModel {
+    var items: [Item] = []  // MainActor 分離で保護される
+}
+```
+
+何かを `@MainActor` でマークするとき、「これをメインスレッドにディスパッチする」とは言っていない。「これはメインアクターの分離ドメインに属する」と言っている。コンパイラは、これにアクセスするものは MainActor 上にいるか、境界を越えるために `await` しなければならないことを強制する。
+
+<div class="tip">
+<h4>迷ったら @MainActor を使え</h4>
+
+ほとんどのアプリでは、ViewModel に `@MainActor` をマークするのが正しい選択だ。パフォーマンスの懸念は通常大げさだ。ここから始めて、実際に問題を測定した場合のみ最適化しよう。
+</div>
+
+**2. Actors**
+
+[actor](https://developer.apple.com/documentation/swift/actor) は自身の可変状態を保護する。一度に一つのコードだけがそのデータにアクセスできることを保証する:
 
 ```swift
 actor BankAccount {
     var balance: Double = 0
 
     func deposit(_ amount: Double) {
-        balance += amount  // 安全! 一度に一人の呼び出し者のみ
+        balance += amount  // 安全: アクターが排他的アクセスを保証
     }
 }
+
+// 外部からは、境界を越えるために await しなければならない
+await account.deposit(100)
 ```
 
-アクターなしでは、二つのスレッドが balance = 100 を読み取り、両方が 50 を追加し、両方が 150 を書き込みます - 50ドル失いました。アクターがあれば、Swift は自動的にアクセスをキューイングし、両方の預金が正しく完了します。
+**アクターはスレッドではない。** アクターは分離境界だ。Swift ランタイムがどのスレッドが実際にアクターコードを実行するかを決定する。それを制御することはできないし、する必要もない。
 
-<div class="warning">
-<h4>アクターを使いすぎない</h4>
+**3. Nonisolated**
 
-カスタムアクターが必要なのは、**以下の4つすべて**が真の場合のみです:
-1. Sendable でない(スレッドセーフでない)可変状態がある
-2. 複数の場所がアクセスする必要がある
-3. その状態の操作はアトミックでなければならない
-4. MainActor 上に置けない
-
-どれか一つでも偽なら、おそらくアクターは必要ありません。ほとんどの UI 状態は `@MainActor` 上に置けます。[アクターをいつ使うかについて詳しく読む](https://www.massicotte.org/actors/)。
-</div>
-
-### Nonisolated: 廊下
-
-`nonisolated` とマークされたコードは廊下のようなものです - どのオフィスにも属さず、どこからでもアクセスできます。
+[`nonisolated`](https://developer.apple.com/documentation/swift/nonisolated) でマークされたコードはアクター分離をオプトアウトする。`await` なしでどこからでも呼び出せるが、アクターの保護された状態にはアクセスできない:
 
 ```swift
-actor UserSession {
-    let userId: String          // 不変 - どこからでも安全に読める
-    var lastActivity: Date      // 可変 - アクター保護が必要
+actor BankAccount {
+    var balance: Double = 0
 
-    nonisolated var displayId: String {
-        "User: \(userId)"       // 不変データのみ読み取る
+    nonisolated func bankName() -> String {
+        "Acme Bank"  // アクター状態にアクセスしない、どこからでも呼び出し安全
     }
 }
 
-// 使い方 - nonisolated には await 不要
-let session = UserSession(userId: "123")
-print(session.displayId)  // 同期的に動作!
+let name = account.bankName()  // await 不要
 ```
 
-不変データのみを読み取る計算プロパティには `nonisolated` を使います。
+<div class="tip">
+<h4>親しみやすい並行処理: 摩擦を減らす</h4>
 
-  </div>
-</section>
+[親しみやすい並行処理](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html)はメンタルモデルをシンプルにする。有効にするには、`SWIFT_VERSION` を `6`（または `-enable-upcoming-feature` 付きの `5`）に、`SWIFT_APPROACHABLE_CONCURRENCY` を `YES` に設定する。新しい Xcode 26 プロジェクトではデフォルトで両方が有効になっている。
 
-<section id="propagation">
-  <div class="container">
+- 他に指定しない限りすべてが MainActor で実行される
+- メインスレッドから外れた CPU 集約的な作業が必要なときは `@concurrent` を使う
+- `nonisolated` async 関数はバックグラウンドスレッドにジャンプする代わりに呼び出し元のアクターにとどまる
 
-## 分離の伝播方法
+コードは MainActor で実行される。バックグラウンド作業が必要なときは `@concurrent` でマークする。それだけだ。
 
-型をアクター分離でマークすると、そのメソッドはどうなるでしょうか? クロージャは? 分離がどのように広がるかを理解することが、驚きを避ける鍵です。
+<pre><code class="language-swift">// MainActor で実行（デフォルト）
+func updateUI() async { }
+
+// バックグラウンドスレッドで実行（オプトイン）
+@concurrent func processLargeFile() async { }</code></pre>
+</div>
 
 <div class="analogy">
 <h4>オフィスビル</h4>
 
-ある部署に雇われると、デフォルトでその部署のオフィスで働きます。マーケティング部門に雇われたら、会計部門にランダムに現れることはありません。
+アプリをオフィスビルと考えよう。各**分離ドメイン**はドアにロックがかかったプライベートオフィスだ。一度に一人だけが中に入って、そのオフィスの書類を扱える。
 
-同様に、関数が `@MainActor` クラス内で定義されると、その分離を継承します。親と「同じオフィスで働く」のです。
-</div>
+- **`MainActor`** は受付 - すべての顧客対応が行われる場所。一つしかなく、ユーザーが見るすべてを処理する。
+- **`actor`** 型は部門オフィス - 経理、法務、人事。それぞれが自分の機密書類を保護する。
+- **`nonisolated`** コードは廊下 - 誰でも歩ける共有スペースだが、プライベートな書類はそこにはない。
 
-### クラスは分離を継承する
-
-```swift
-@MainActor
-class ViewModel {
-    var count = 0           // MainActor に分離
-
-    func increment() {      // これも MainActor に分離
-        count += 1
-    }
-}
-```
-
-クラス内のすべてが `@MainActor` を継承します。各メソッドをマークする必要はありません。
-
-### タスクはコンテキストを継承する(通常は)
-
-```swift
-@MainActor
-class ViewModel {
-    func doWork() {
-        Task {
-            // これは MainActor を継承!
-            self.updateUI()  // 安全、await 不要
-        }
-    }
-}
-```
-
-`@MainActor` コンテキストから作成された `Task { }` は MainActor 上にとどまります。これは通常望ましい動作です。
-
-### Task.detached は継承を断ち切る
-
-```swift
-@MainActor
-class ViewModel {
-    func doWork() {
-        Task.detached {
-            // もう MainActor 上ではない!
-            await self.updateUI()  // 今は await が必要
-        }
-    }
-}
-```
-
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-`Task.detached` は外部の請負業者を雇うようなものです。彼らはあなたのオフィスへのバッジを持っていません - 自分のスペースで働き、あなたのものにアクセスするには適切なチャネルを通さなければなりません。
-</div>
-
-<div class="warning">
-<h4>Task.detached は通常間違い</h4>
-
-ほとんどの場合、通常の `Task` が必要です。デタッチされたタスクは優先度、タスクローカル値、アクターコンテキストを継承しません。明示的にその分離が必要な場合のみ使用してください。
+他人のオフィスに無断で入ることはできない。ノックして（`await`）、入れてもらうのを待つ。
 </div>
 
   </div>
@@ -251,263 +308,229 @@ class ViewModel {
 <section id="sendable">
   <div class="container">
 
-## 境界を越えられるもの
+## [分離ドメインを越えられるもの: Sendable](#sendable)
 
-分離ドメイン(オフィス)とその伝播方法を知ったので、次の質問は:**それらの間で何を渡せるか?**
+分離ドメインはデータを保護するが、最終的にはドメイン間でデータを渡す必要がある。そうするとき、Swift は安全かどうかをチェックする。
 
-<div class="analogy">
-<h4>オフィスビル</h4>
+考えてみよう: 可変クラスへの参照をあるアクターから別のアクターに渡すと、両方のアクターが同時にそれを変更できてしまう。まさに防ごうとしているデータレースだ。だから Swift は知る必要がある: このデータは安全に共有できるか？
 
-すべてがオフィスを出られるわけではありません:
+答えは [`Sendable`](https://developer.apple.com/documentation/swift/sendable) プロトコルだ。コンパイラに「この型は分離境界を越えて渡しても安全」と伝えるマーカーだ:
 
-- **コピー**は共有しても安全 - 法務部門が文書のコピーを作って会計部門に送れば、両方が独自のコピーを持ちます。衝突はありません。
-- **署名入りの原本契約**はその場にとどまる必要があります - 二つの部署が両方とも原本を変更できたら、混乱が生じます。
-
-Swift の用語では:**Sendable** 型はコピー(共有しても安全)、**非 Sendable** 型は原本(一つのオフィスにとどまる必要がある)です。
-</div>
-
-### Sendable: 共有しても安全
-
-これらの型は分離境界を安全に越えられます:
+- **Sendable** 型は安全に越えられる（値型、不変データ、アクター）
+- **Non-Sendable** 型は越えられない（可変状態を持つクラス）
 
 ```swift
-// 不変データを持つ構造体 - コピーのようなもの
+// Sendable - 値型なので、各場所がコピーを得る
 struct User: Sendable {
     let id: Int
     let name: String
 }
 
-// アクターは自分自身を保護する - 自分の訪問者を処理する
-actor BankAccount { }  // 自動的に Sendable
-```
-
-**自動的に Sendable:**
-- Sendable プロパティを持つ値型(構造体、列挙型)
-- アクター(自分自身を保護する)
-- 不変クラス(`final class` で `let` プロパティのみ)
-
-### 非 Sendable: その場にとどまる必要がある
-
-これらの型は境界を安全に越えられません:
-
-```swift
-// 可変状態を持つクラス - 原本文書のようなもの
+// Non-Sendable - 可変状態を持つクラス
 class Counter {
-    var count = 0  // 二つのオフィスがこれを変更 = 災難
+    var count = 0  // 二箇所がこれを変更 = 災害
 }
 ```
 
-**なぜこれが重要な区別か?** なぜなら、遭遇するすべてのコンパイラエラーは、*「非 Sendable 型を分離境界を越えて送ろうとしています」*ということに帰着するからです。
+### 型を Sendable にする
 
-### コンパイラが文句を言うとき
+Swift は多くの型で `Sendable` を自動的に推論する:
 
-Swift が何かが Sendable でないと言う場合、オプションがあります:
+- **Sendable プロパティのみを持つ構造体と列挙型**は暗黙的に `Sendable`
+- **アクター**は常に `Sendable` - 自身の状態を保護するから
+- **`@MainActor` 型**は `Sendable` - MainActor がアクセスを直列化するから
 
-1. **値型にする** - `class` の代わりに `struct` を使う
-2. **分離する** - `@MainActor` 上に保持して越える必要をなくす
-3. **非 Sendable のままにする** - オフィス間で渡さないだけ
-4. **最後の手段:** `@unchecked Sendable` - 安全だと約束する(注意して)
+クラスの場合は難しい。クラスが `Sendable` に準拠できるのは、`final` で、すべての格納プロパティが不変の場合のみ:
+
+```swift
+final class APIConfig: Sendable {
+    let baseURL: URL      // 不変
+    let timeout: Double   // 不変
+}
+```
+
+他の手段（ロック、アトミック）でスレッドセーフなクラスがある場合は、[`@unchecked Sendable`](https://developer.apple.com/documentation/swift/uncheckedsendable) を使ってコンパイラに「信じて」と伝えられる:
+
+```swift
+final class ThreadSafeCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Data] = [:]
+}
+```
+
+<div class="warning">
+<h4>@unchecked Sendable は約束だ</h4>
+
+コンパイラはスレッドセーフティを検証しない。間違っていればデータレースになる。控えめに使おう。
+</div>
 
 <div class="tip">
-<h4>非 Sendable から始める</h4>
+<h4>親しみやすい並行処理: 摩擦を減らす</h4>
 
-[Matt Massicotte は提唱しています](https://www.massicotte.org/non-sendable/)通常の非 Sendable 型から始めることを。境界を越える必要がある場合のみ `Sendable` を追加します。非 Sendable 型はシンプルで、準拠の頭痛を避けられます。
+[親しみやすい並行処理](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html)では、Sendable エラーはずっと少なくなる。有効にするには、`SWIFT_VERSION` を `6`（または `-enable-upcoming-feature` 付きの `5`）に、`SWIFT_APPROACHABLE_CONCURRENCY` を `YES` に設定する。新しい Xcode 26 プロジェクトではデフォルトで両方が有効になっている。
+
+- コードが分離境界を越えないなら、Sendable は不要
+- async 関数はバックグラウンドスレッドにホップする代わりに呼び出し元のアクターにとどまる
+- コンパイラは値が安全に使われているかの検出が賢くなる
+
+コードは明示的にオプトアウトしない限り MainActor で実行される。並列性が本当に必要なときは、関数を `@concurrent` でマークしてから Sendable について考えよう。
+</div>
+
+<div class="analogy">
+<h4>コピーと原本</h4>
+
+オフィスビルに戻ろう。部門間で情報を共有する必要があるとき:
+
+- **コピーは安全** - 法務部が書類のコピーを作って経理部に送れば、両方が自分のコピーを持つ。好きなように落書きしたり変更したりできる。衝突なし。
+- **署名入りの原本契約はその場にとどまるべき** - 二つの部門が両方とも原本を変更できたら、カオスになる。どれが本物のバージョン？
+
+`Sendable` 型はコピーのようなもの: 各場所が独立したコピーを得る（値型）か、不変である（誰も変更できない）から共有しても安全。Non-`Sendable` 型は原本契約のようなもの: 渡し回すと矛盾する変更の可能性が生まれる。
 </div>
 
   </div>
 </section>
 
-<section id="async-await">
+<section id="isolation-inheritance">
   <div class="container">
 
-## 境界を越える方法
+## [分離がどう継承されるか](#isolation-inheritance)
 
-分離ドメインを理解し、何がそれらを越えられるかを知っています。では:**オフィス間で実際にどうやって通信するか?**
+分離ドメインがデータを保護し、Sendable がその間を越えるものを制御することを見てきた。でも、そもそもコードはどうやって分離ドメインに入るのか？
 
-<div class="analogy">
-<h4>オフィスビル</h4>
+関数を呼び出したりクロージャを作成したりすると、分離はコードを通じて流れる。[親しみやすい並行処理](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html)では、アプリは [`MainActor`](https://developer.apple.com/documentation/swift/mainactor) から始まり、何かが明示的に変更しない限り、その分離は呼び出すコードに伝播する。このフローを理解することで、コードがどこで実行されるか、なぜコンパイラが時々文句を言うかを予測できる。
 
-他のオフィスに勝手に入ることはできません。リクエストを送って応答を待ちます。待っている間に他のことをするかもしれませんが、続けるにはその応答が必要です。
+### 関数呼び出し
 
-それが `async/await` です - 別の分離ドメインにリクエストを送り、答えを得るまで一時停止します。
-</div>
-
-### await キーワード
-
-別のアクター上の関数を呼び出すとき、`await` が必要です:
+関数を呼び出すと、その分離がどこで実行されるかを決定する:
 
 ```swift
-actor DataStore {
-    var items: [Item] = []
-
-    func add(_ item: Item) {
-        items.append(item)
-    }
-}
-
-@MainActor
-class ViewModel {
-    let store = DataStore()
-
-    func addItem(_ item: Item) async {
-        await store.add(item)  // 別のオフィスへのリクエスト
-        updateUI()             // 自分のオフィスに戻る
-    }
-}
+@MainActor func updateUI() { }      // 常に MainActor で実行
+func helper() { }                    // 呼び出し元の分離を継承
+@concurrent func crunch() async { }  // 明示的にオフアクターで実行
 ```
 
-`await` は:「このリクエストを送って完了まで一時停止。待っている間に他の仕事をするかもしれません。」という意味です。
+[親しみやすい並行処理](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html)では、ほとんどのコードが `MainActor` 分離を継承する。関数は呼び出し元がいる場所で実行される - 明示的にオプトアウトしない限り。
 
-### 中断、ブロックではない
+### クロージャ
 
-<div class="warning">
-<h4>よくある誤解</h4>
-
-多くの開発者は `async` を追加すればコードがバックグラウンドで実行されると思い込んでいます。そうではありません。`async` キーワードは単に関数が*一時停止できる*ことを意味します。*どこで*実行されるかについては何も言っていません。
-</div>
-
-重要な洞察は**ブロック**と**中断**の違いです:
-
-- **ブロック**: 待合室で壁を見つめて座っています。他には何も起こりません。
-- **中断**: 電話番号を残して用事を済ませます。準備ができたら電話をくれます。
-
-<div class="code-tabs">
-<div class="code-tabs-nav">
-<button class="active">ブロック</button>
-<button>中断</button>
-</div>
-<div class="code-tab-content active">
-
-```swift
-// スレッドは何もせずに5秒間待機
-Thread.sleep(forTimeInterval: 5)
-```
-
-</div>
-<div class="code-tab-content">
-
-```swift
-// スレッドは待っている間に他の仕事をするために解放される
-try await Task.sleep(for: .seconds(5))
-```
-
-</div>
-</div>
-
-### 同期コードから非同期作業を開始する
-
-時々、同期コードにいて非同期を呼び出す必要があります。`Task` を使います:
+クロージャは定義されたコンテキストから分離を継承する:
 
 ```swift
 @MainActor
 class ViewModel {
-    func buttonTapped() {  // 同期関数
+    func setup() {
+        let closure = {
+            // ViewModel から MainActor を継承
+            self.updateUI()  // 安全、同じ分離
+        }
+        closure()
+    }
+}
+```
+
+これが SwiftUI の `Button` アクションクロージャが安全に `@State` を更新できる理由だ: ビューから MainActor 分離を継承している。
+
+### Tasks
+
+`Task { }` は作成された場所からアクター分離を継承する:
+
+```swift
+@MainActor
+class ViewModel {
+    func doWork() {
         Task {
-            await loadData()  // 今は await を使える
+            // MainActor 分離を継承
+            self.updateUI()  // 安全、await 不要
         }
     }
 }
 ```
 
-<div class="analogy">
-<h4>オフィスビル</h4>
+これは通常望む動作だ。タスクはそれを作成したコードと同じアクターで実行される。
 
-`Task` は従業員に仕事を割り当てるようなものです。従業員がリクエストを処理し(他のオフィスを待つことを含む)、あなたは目の前の仕事を続けます。
-</div>
+### 継承を断ち切る: Task.detached
 
-  </div>
-</section>
-
-<section id="patterns">
-  <div class="container">
-
-## うまくいくパターン
-
-### ネットワークリクエストパターン
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item main">MainActor</span>
-  <span class="isolation-legend-item nonisolated">Nonisolated (ネットワーク呼び出し)</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment main" style="flex-grow: 8"></div>
-  <div class="segment nonisolated" style="flex-grow: 2"></div>
-  <div class="segment main" style="flex-grow: 6"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 8"></div>
-  <div class="segment nonisolated-highlight" style="flex-grow: 2"></div>
-  <div class="segment" style="flex-grow: 6"></div>
-</div>
+コンテキストを何も継承しないタスクが欲しいこともある:
 
 ```swift
 @MainActor
-@Observable
 class ViewModel {
-    var users: [User] = []
-    var isLoading = false
-
-    func fetchUsers() async {
-        isLoading = true
-
-        // これは中断 - スレッドは他の仕事をするために解放される
-        let users = await networkService.getUsers()
-
-        // 自動的に MainActor に戻る
-        self.users = users
-        isLoading = false
-    }
-}
-```
-
-</div>
-
-`DispatchQueue.main.async` は不要です。`@MainActor` 属性が処理します。
-
-### async let による並列作業
-
-```swift
-func loadProfile() async -> Profile {
-    async let avatar = loadImage("avatar.jpg")
-    async let banner = loadImage("banner.jpg")
-    async let details = loadUserDetails()
-
-    // 3つすべてが並列で実行!
-    return Profile(
-        avatar: await avatar,
-        banner: await banner,
-        details: await details
-    )
-}
-```
-
-### ダブルタップを防ぐ
-
-このパターンは Matt Massicotte の[ステートフルシステム](https://www.massicotte.org/step-by-step-stateful-systems)ガイドからのものです:
-
-```swift
-@MainActor
-class ButtonViewModel {
-    private var isLoading = false
-
-    func buttonTapped() {
-        // 非同期作業の前に同期的にガード
-        guard !isLoading else { return }
-        isLoading = true
-
-        Task {
-            await doExpensiveWork()
-            isLoading = false
+    func doHeavyWork() {
+        Task.detached {
+            // アクター分離なし、協調プールで実行
+            let result = await self.expensiveCalculation()
+            await MainActor.run {
+                self.data = result  // 明示的に戻る
+            }
         }
     }
 }
 ```
 
 <div class="warning">
-<h4>重要: ガードは同期的でなければならない</h4>
+<h4>Task.detached は通常間違い</h4>
 
-ガードを await の後の Task 内に置くと、二つのボタンタップが両方とも作業を開始できるウィンドウがあります。[順序と並行処理について詳しく学ぶ](https://www.massicotte.org/ordering-and-concurrency)。
+Swift チームは [Task.detached を最後の手段として](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929)推奨している。優先度、タスクローカル値、アクターコンテキストを継承しない。ほとんどの場合、通常の `Task` が必要だ。メインアクターから外れた CPU 集約的な作業が必要なら、代わりに関数を `@concurrent` でマークしよう。
+</div>
+
+<div class="analogy">
+<h4>ビルを歩く</h4>
+
+受付オフィス（MainActor）にいて、手伝いを呼ぶと、彼らは*あなたの*オフィスに来る。あなたの場所を継承する。タスクを作成すると（「これをやっておいて」）、そのアシスタントもあなたのオフィスから始まる。
+
+誰かが別のオフィスに行くのは、明示的にそこに行く場合だけだ:「このためには経理で作業する必要がある」（`actor`）、または「これは奥のオフィスで処理する」（`@concurrent`）。
+</div>
+
+  </div>
+</section>
+
+<section id="putting-it-together">
+  <div class="container">
+
+## [すべてをまとめる](#putting-it-together)
+
+一歩引いて、すべてのピースがどうフィットするか見てみよう。
+
+Swift 並行処理は多くの概念に感じられる: `async/await`、`Task`、アクター、`MainActor`、`Sendable`、分離ドメイン。でも実際には中心にあるのは一つのアイデアだけだ: **分離はデフォルトで継承される**。
+
+[親しみやすい並行処理](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html)を有効にすると、アプリは [`MainActor`](https://developer.apple.com/documentation/swift/mainactor) から始まる。それが出発点だ。そこから:
+
+- 呼び出すすべての関数がその分離を**継承**する
+- 作成するすべてのクロージャがその分離を**キャプチャ**する
+- 生成するすべての [`Task { }`](https://developer.apple.com/documentation/swift/task) がその分離を**継承**する
+
+何もアノテートする必要はない。スレッドについて考える必要はない。コードは `MainActor` で実行され、分離はプログラム全体に自動的に伝播する。
+
+その継承から抜け出す必要があるときは、明示的にする:
+
+- **`@concurrent`** は「バックグラウンドスレッドで実行」と言う
+- **`actor`** は「この型は独自の分離ドメインを持つ」と言う
+- **`Task.detached { }`** は「ゼロから始める、何も継承しない」と言う
+
+そして分離ドメイン間でデータを渡すとき、Swift は安全かチェックする。それが [`Sendable`](https://developer.apple.com/documentation/swift/sendable) の役割だ: 境界を安全に越えられる型をマークする。
+
+それだけだ。モデル全体:
+
+1. **分離は伝播する** - `MainActor` からコードを通じて
+2. **明示的にオプトアウトする** - バックグラウンド作業や別の状態が必要なとき
+3. **Sendable が境界を守る** - データがドメイン間を越えるとき
+
+コンパイラが文句を言うとき、これらのルールのどれかが違反されたと伝えている。継承をトレースしよう: 分離はどこから来た？コードはどこで実行しようとしている？どんなデータが境界を越えている？正しい質問をすれば答えは通常明らかだ。
+
+### ここからどこへ
+
+良いニュース: すべてを一度にマスターする必要はない。
+
+**ほとんどのアプリは基本だけで十分だ。** ViewModel に `@MainActor` をマークし、ネットワーク呼び出しに `async/await` を使い、ボタンタップから非同期作業を開始するときに `Task { }` を作成する。それだけだ。これが現実のアプリの 80% をカバーする。コンパイラがもっと必要か教えてくれる。
+
+**並列作業が必要なとき**は、複数のものを一度に取得するために `async let` を使うか、タスク数が動的な場合は [`TaskGroup`](https://developer.apple.com/documentation/swift/taskgroup) を使う。キャンセルを優雅に処理することを学ぼう。これが複雑なデータ読み込みやリアルタイム機能を持つアプリをカバーする。
+
+**高度なパターンは後で**来る - もし来るなら。共有可変状態のためのカスタムアクター、CPU 集約的処理のための `@concurrent`、深い `Sendable` の理解。これはフレームワークコード、サーバーサイド Swift、複雑なデスクトップアプリだ。ほとんどの開発者はこのレベルを必要としない。
+
+<div class="tip">
+<h4>シンプルに始める</h4>
+
+持っていない問題のために最適化するな。基本から始め、アプリを出荷し、実際の問題にぶつかったときだけ複雑さを追加しよう。コンパイラが導いてくれる。
 </div>
 
   </div>
@@ -516,247 +539,94 @@ class ButtonViewModel {
 <section id="mistakes">
   <div class="container">
 
-## 避けるべき一般的な間違い
+## [注意: よくある間違い](#mistakes)
 
-これらは経験豊富な開発者でも犯す[一般的な間違い](https://www.massicotte.org/mistakes-with-concurrency/)です:
-
-### async = バックグラウンドと考える
-
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-`async` を追加しても別のオフィスに移動しません。まだ受付にいます - 今は凍結せずに配達を待てるだけです。
-</div>
+### async = バックグラウンドと思う
 
 ```swift
-// これはまだメインスレッドをブロック!
+// これはまだメインスレッドをブロックする！
 @MainActor
 func slowFunction() async {
-    let result = expensiveCalculation()  // 同期 = ブロック
+    let result = expensiveCalculation()  // 同期作業 = ブロック
     data = result
 }
 ```
 
-別のオフィスで作業が必要な場合は、明示的にそこに送ります:
-
-```swift
-func slowFunction() async {
-    let result = await Task.detached {
-        expensiveCalculation()  // 今は別のオフィスにいる
-    }.value
-    await MainActor.run { data = result }
-}
-```
+`async` は「一時停止できる」という意味だ。実際の作業はそれが実行される場所で実行される。CPU 重い作業には `@concurrent`（Swift 6.2）か `Task.detached` を使おう。
 
 ### アクターを作りすぎる
 
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-すべてのデータに新しいオフィスを作ると、それらの間で通信するために終わりのない事務作業が発生します。ほとんどの仕事は受付で行えます。
-</div>
-
 ```swift
-// 過剰設計 - すべての呼び出しがオフィス間を歩く必要がある
+// 過剰設計
 actor NetworkManager { }
 actor CacheManager { }
 actor DataManager { }
 
-// より良い - ほとんどのものは受付に置ける
+// より良い - ほとんどは MainActor で済む
 @MainActor
 class AppState { }
 ```
 
-### MainActor.run をどこでも使う
-
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-すべての小さなことのために受付に歩いているなら、そこで働きましょう。常に用事を繰り返すのではなく、職務記述書の一部にしてください。
-</div>
-
-```swift
-// これをしない - 常に受付に歩く
-await MainActor.run { doMainActorStuff() }
-
-// これをする - 受付で働く
-@MainActor func doMainActorStuff() { }
-```
+カスタムアクターが必要なのは、`MainActor` に置けない共有可変状態があるときだけだ。[Matt Massicotte のルール](https://www.massicotte.org/actors/): アクターを導入するのは (1) non-`Sendable` な状態があり、(2) その状態への操作がアトミックでなければならず、(3) それらの操作が既存のアクターで実行できない場合のみ。正当化できないなら、代わりに `@MainActor` を使おう。
 
 ### すべてを Sendable にする
 
-すべてが `Sendable` である必要はありません。どこでも `@unchecked Sendable` を追加しているなら、オフィスを出る必要のないもののコピーを作っています。
+すべてが境界を越える必要はない。あちこちで `@unchecked Sendable` を追加しているなら、一歩引いてそのデータが本当に分離ドメイン間を移動する必要があるか問おう。
 
-### コンパイラ警告を無視する
-
-`Sendable` についてのすべてのコンパイラ警告は、セキュリティガードが何かをオフィス間で運ぶのが安全でないと伝えているのです。無視せず - [理解しましょう](https://www.massicotte.org/complete-checking/)。
-
-  </div>
-</section>
-
-<section id="errors">
-  <div class="container">
-
-## 一般的なコンパイラエラー
-
-これらは実際に見るエラーメッセージです。それぞれがコンパイラがデータレースからあなたを守っています。
-
-### "Sending 'self.foo' risks causing data races"
-
-<div class="compiler-error">
-Sending 'self.foo' risks causing data races
-</div>
-
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-原本文書を別のオフィスに運ぼうとしています。コピーを作る(Sendable)か、一か所に保持してください。
-</div>
-
-**修正 1:** `class` の代わりに `struct` を使う
-
-**修正 2:** 一つのアクターに保持する:
+### 必要ないのに MainActor.run を使う
 
 ```swift
+// 不要
+Task {
+    let data = await fetchData()
+    await MainActor.run {
+        self.data = data
+    }
+}
+
+// より良い - 関数を @MainActor にする
 @MainActor
-class MyClass {
-    var foo: SomeType  // 受付にとどまる
+func loadData() async {
+    self.data = await fetchData()
 }
 ```
 
-### "Non-sendable type cannot cross actor boundary"
+`MainActor.run` が正解なことはまれだ。MainActor 分離が必要なら、代わりに関数に `@MainActor` をアノテートしよう。より明確で、コンパイラがもっと助けてくれる。[Matt のこれについての見解](https://www.massicotte.org/problematic-patterns/)を参照。
 
-<div class="compiler-error">
-Non-sendable type 'MyClass' cannot cross actor boundary
-</div>
-
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-オフィス間で原本を運ぼうとしています。セキュリティガードが止めました。
-</div>
-
-**修正 1:** 構造体にする:
+### 協調スレッドプールをブロックする
 
 ```swift
-// 前: class (非 Sendable)
-class User { var name: String }
-
-// 後: struct (Sendable)
-struct User: Sendable { let name: String }
-```
-
-**修正 2:** 一つのアクターに分離する:
-
-```swift
-@MainActor
-class User { var name: String }
-```
-
-### "Actor-isolated property cannot be referenced"
-
-<div class="compiler-error">
-Actor-isolated property 'balance' cannot be referenced from the main actor
-</div>
-
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-適切なチャネルを通さずに、別のオフィスのファイルキャビネットに手を伸ばしています。
-</div>
-
-**修正:** `await` を使う:
-
-```swift
-// 間違い - 直接手を伸ばす
-let value = myActor.balance
-
-// 正しい - 適切なリクエスト
-let value = await myActor.balance
-```
-
-### "Call to main actor-isolated method in synchronous context"
-
-<div class="compiler-error">
-Call to main actor-isolated instance method 'updateUI()' in a synchronous nonisolated context
-</div>
-
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-列に並ばずに受付を使おうとしています。
-</div>
-
-**修正 1:** 呼び出し元を `@MainActor` にする:
-
-```swift
-@MainActor
-func doSomething() {
-    updateUI()  // 同じ分離、await 不要
+// 絶対にやるな - デッドロックのリスク
+func badIdea() async {
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        await doWork()
+        semaphore.signal()
+    }
+    semaphore.wait()  // 協調スレッドをブロック！
 }
 ```
 
-**修正 2:** `await` を使う:
+Swift の協調スレッドプールは限られたスレッドを持つ。`DispatchSemaphore`、`DispatchGroup.wait()` などでブロックするとデッドロックを引き起こす可能性がある。同期と非同期のコードをブリッジする必要があるなら、`async let` を使うか、完全に非同期のままになるように再構成しよう。
+
+### 不要な Task を作る
 
 ```swift
-func doSomething() async {
-    await updateUI()
+// 不要な Task 作成
+func fetchAll() async {
+    Task { await fetchUsers() }
+    Task { await fetchPosts() }
+}
+
+// より良い - 構造化並行処理を使う
+func fetchAll() async {
+    async let users = fetchUsers()
+    async let posts = fetchPosts()
+    await (users, posts)
 }
 ```
 
-  </div>
-</section>
-
-<section>
-  <div class="container">
-
-## Swift 並行処理の3つのレベル
-
-すべてを一度に学ぶ必要はありません。これらのレベルを進んでください:
-
-<div class="analogy">
-<h4>オフィスビル</h4>
-
-会社を成長させることと考えてください。50階建ての本社から始めません - 机から始めます。
-</div>
-
-これらのレベルは厳密な境界ではありません - アプリの異なる部分が異なるレベルを必要とするかもしれません。ほぼレベル1のアプリが、レベル2のパターンが必要な1つの機能を持つかもしれません。それで構いません。各部分に最もシンプルなアプローチを使ってください。
-
-### レベル 1: スタートアップ
-
-全員が受付で働きます。シンプル、直接的、官僚主義なし。
-
-- ネットワーク呼び出しに `async/await` を使う
-- UI クラスに `@MainActor` をマークする
-- SwiftUI の `.task` モディファイアを使う
-
-これは 80% のアプリを扱います。[Things](https://culturedcode.com/things/)、[Bear](https://bear.app/)、[Flighty](https://flighty.com/)、[Day One](https://dayoneapp.com/) のようなアプリはおそらくこのカテゴリーに入ります - 主にデータを取得して表示するアプリです。
-
-### レベル 2: 成長する会社
-
-複数のことを同時に処理する必要があります。並列プロジェクトとチームの調整が必要です。
-
-- 並列作業に `async let` を使う
-- 動的並列処理に `TaskGroup` を使う
-- タスクキャンセルを理解する
-
-[Ivory](https://tapbots.com/ivory/)/[Ice Cubes](https://github.com/Dimillian/IceCubesApp)(複数のタイムラインとストリーミング更新を管理する Mastodon クライアント)、[Overcast](https://overcast.fm/)(ダウンロード、再生、バックグラウンド同期を調整)、[Slack](https://slack.com/)(複数チャネルでのリアルタイムメッセージング)のようなアプリは、特定の機能でこれらのパターンを使うかもしれません。
-
-### レベル 3: エンタープライズ
-
-独自のポリシーを持つ専門部署。複雑なオフィス間通信。
-
-- 共有状態のためのカスタムアクターを作成
-- Sendable の深い理解
-- カスタムエグゼキュータ
-
-[Xcode](https://developer.apple.com/xcode/)、[Final Cut Pro](https://www.apple.com/final-cut-pro/)、[Vapor](https://vapor.codes/) や [Hummingbird](https://hummingbird.codes/) のようなサーバーサイド Swift フレームワークはおそらくこれらのパターンが必要です - 複雑な共有状態、何千もの並行接続、他の人が構築するフレームワークレベルのコードです。
-
-<div class="tip">
-<h4>シンプルに始める</h4>
-
-ほとんどのアプリはレベル3を必要としません。スタートアップで済むときにエンタープライズを構築しないでください。
-</div>
+すでに async コンテキストにいるなら、非構造化 `Task` を作るより構造化並行処理（`async let`、`TaskGroup`）を優先しよう。構造化並行処理はキャンセルを自動的に処理し、コードを推論しやすくする。
 
   </div>
 </section>
@@ -764,315 +634,31 @@ func doSomething() async {
 <section id="glossary">
   <div class="container">
 
-## 用語集: 遭遇するその他のキーワード
+## [チートシート: クイックリファレンス](#glossary)
 
-コアコンセプトの他に、野生で見る Swift 並行処理のキーワードがあります:
+| キーワード | 何をするか |
+|---------|--------------|
+| `async` | 関数は一時停止できる |
+| `await` | 終わるまでここで一時停止 |
+| `Task { }` | 非同期作業を開始、コンテキストを継承 |
+| `Task.detached { }` | 非同期作業を開始、コンテキスト継承なし |
+| `@MainActor` | メインスレッドで実行 |
+| `actor` | 分離された可変状態を持つ型 |
+| `nonisolated` | アクター分離をオプトアウト |
+| `Sendable` | 分離ドメイン間で渡しても安全 |
+| `@concurrent` | 常にバックグラウンドで実行（Swift 6.2+） |
+| `async let` | 並列作業を開始 |
+| `TaskGroup` | 動的な並列作業 |
 
-| キーワード | 意味 |
-|---------|---------------|
-| `nonisolated` | アクターの分離をオプトアウト - 保護なしで実行 |
-| `isolated` | パラメータがアクターのコンテキストで実行することを明示的に宣言 |
-| `@Sendable` | クロージャが分離境界を越えて渡しても安全であることをマーク |
-| `Task.detached` | 現在のコンテキストから完全に分離したタスクを作成 |
-| `AsyncSequence` | `for await` で反復できるシーケンス |
-| `AsyncStream` | コールバックベースのコードを async シーケンスにブリッジする方法 |
-| `withCheckedContinuation` | 完了ハンドラを async/await にブリッジ |
-| `Task.isCancelled` | 現在のタスクがキャンセルされたかチェック |
-| `@preconcurrency` | レガシーコードの並行処理警告を抑制 |
-| `GlobalActor` | MainActor のような独自のカスタムアクターを作成するプロトコル |
-
-### それぞれをいつ使うか
-
-#### nonisolated - 計算プロパティの読み取り
-
-<div class="analogy">
-オフィスのドアにある名札のようなもの - 通りがかりの人は誰でも、中に入ってあなたを待つ必要なく読めます。
-</div>
-
-デフォルトでは、アクター内のすべてが分離されています - アクセスするには `await` が必要です。しかし、本質的に読み取りが安全なプロパティがあることがあります: 不変の `let` 定数、または他の安全なデータから値を導出するだけの計算プロパティ。これらを `nonisolated` でマークすると、呼び出し元が同期的にアクセスでき、不要な非同期オーバーヘッドを避けられます。
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item actor">アクターに分離</span>
-  <span class="isolation-legend-item nonisolated">Nonisolated</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment actor" style="flex-grow: 4"></div>
-  <div class="segment nonisolated" style="flex-grow: 4"></div>
-  <div class="segment actor" style="flex-grow: 1"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 4"></div>
-  <div class="segment nonisolated-highlight" style="flex-grow: 4"></div>
-  <div class="segment" style="flex-grow: 1"></div>
-</div>
-
-```swift
-actor UserSession {
-    let userId: String  // 不変、読み取りが安全
-    var lastActivity: Date  // 可変、保護が必要
-
-    // これは await なしで呼び出せる
-    nonisolated var displayId: String {
-        "User: \(userId)"  // 不変データのみを読み取る
-    }
-}
-```
-
-</div>
-
-```swift
-// 使い方
-let session = UserSession(userId: "123")
-print(session.displayId)  // await 不要!
-```
-
-#### @Sendable - 境界を越えるクロージャ
-
-<div class="analogy">
-内部に指示が入った封印された封筒のようなもの - 封筒はオフィス間を移動でき、誰でも開いて安全に指示に従えます。
-</div>
-
-クロージャが後で実行されるためにエスケープするか、異なる分離ドメインで実行される場合、Swift はデータレースを引き起こさないことを保証する必要があります。`@Sendable` 属性は境界を越えて渡しても安全なクロージャをマークします - 可変状態を安全でない方法でキャプチャできません。Swift はこれを自動的に推論することが多いですが(`Task.detached` のように)、クロージャを受け入れる API を設計するときに明示的に宣言する必要があることがあります。
-
-```swift
-@MainActor
-class ViewModel {
-    var items: [Item] = []
-
-    func processInBackground() {
-        Task.detached {
-            // このクロージャはデタッチされたタスクから MainActor に越える
-            // @Sendable でなければならない (Swift はこれを推論)
-            let processed = await self.heavyProcessing()
-            await MainActor.run {
-                self.items = processed
-            }
-        }
-    }
-}
-
-// 必要に応じて明示的な @Sendable
-func runLater(_ work: @Sendable @escaping () -> Void) {
-    DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
-        work()
-    }
-}
-```
-
-#### withCheckedContinuation - 古い API のブリッジ
-
-<div class="analogy">
-古い紙のメモシステムと現代の電子メールの間の翻訳者のようなもの。古いシステムが応答を配信するまで郵便室で待ち、新しいシステムを通じて転送します。
-</div>
-
-多くの古い API は async/await の代わりに完了ハンドラを使います。完全に書き直すのではなく、`withCheckedContinuation` を使ってラップできます。この関数は現在のタスクを中断し、continuation オブジェクトを渡し、`continuation.resume()` を呼び出したときに再開します。「checked」バリアントは、2回再開したり、決して再開しないなどのプログラミングエラーを捕まえます。
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item main">Async コンテキスト</span>
-  <span class="isolation-legend-item nonisolated">コールバックコンテキスト</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment nonisolated" style="flex-grow: 5"></div>
-  <div class="segment main" style="flex-grow: 3"></div>
-  <div class="segment nonisolated" style="flex-grow: 3"></div>
-  <div class="segment main" style="flex-grow: 2"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 5"></div>
-  <div class="segment main-highlight" style="flex-grow: 3"></div>
-  <div class="segment nonisolated-highlight" style="flex-grow: 3"></div>
-  <div class="segment main-highlight" style="flex-grow: 2"></div>
-</div>
-
-```swift
-// 古いコールバックベース API
-func fetchUser(id: String, completion: @escaping (User?) -> Void) {
-    // ... コールバック付きネットワーク呼び出し
-}
-
-// async としてラップ
-func fetchUser(id: String) async -> User? {
-    await withCheckedContinuation { continuation in
-        fetchUser(id: id) { user in
-            continuation.resume(returning: user)  // ブリッジバック!
-        }
-    }
-}
-```
-
-</div>
-
-スロー関数には `withCheckedThrowingContinuation` を使います:
-
-```swift
-func fetchUserThrowing(id: String) async throws -> User {
-    try await withCheckedThrowingContinuation { continuation in
-        fetchUser(id: id) { result in
-            switch result {
-            case .success(let user):
-                continuation.resume(returning: user)
-            case .failure(let error):
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-}
-```
-
-#### AsyncStream - イベントソースのブリッジ
-
-<div class="analogy">
-メール転送を設定するようなもの - 古い住所に手紙が届くたびに、自動的に新しい受信箱にルーティングされます。メールが来続ける限りストリームは流れ続けます。
-</div>
-
-`withCheckedContinuation` がワンショットコールバックを処理する一方、多くの API は時間をかけて複数の値を配信します - デリゲートメソッド、NotificationCenter、カスタムイベントシステム。`AsyncStream` はこれらを Swift の `AsyncSequence` にブリッジし、`for await` ループを使えるようにします。ストリームを作成し、その continuation を保存し、新しい値が到着するたびに `yield()` を呼び出します。
-
-```swift
-class LocationTracker: NSObject, CLLocationManagerDelegate {
-    private var continuation: AsyncStream<CLLocation>.Continuation?
-
-    var locations: AsyncStream<CLLocation> {
-        AsyncStream { continuation in
-            self.continuation = continuation
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager,
-                        didUpdateLocations locations: [CLLocation]) {
-        for location in locations {
-            continuation?.yield(location)
-        }
-    }
-}
-
-// 使い方
-let tracker = LocationTracker()
-for await location in tracker.locations {
-    print("新しい位置: \(location)")
-}
-```
-
-#### Task.isCancelled - 協調的キャンセル
-
-<div class="analogy">
-大きなプロジェクトの各ステップを開始する前に、「これに取り組むのをやめて」というメモがないか受信箱をチェックするようなもの。強制的に停止させられるのではなく - チェックして礼儀正しく応答することを選びます。
-</div>
-
-Swift は協調的キャンセルを使います - タスクがキャンセルされても、すぐには停止しません。代わりに、フラグが設定され、定期的にチェックする責任があります。これにより、クリーンアップと部分的な結果の制御が可能になります。すぐにスローするには `Task.checkCancellation()` を使い、キャンセルを優雅に処理したい(部分的な結果を返すなど)場合は `Task.isCancelled` をチェックします。
-
-```swift
-func processLargeDataset(_ items: [Item]) async throws -> [Result] {
-    var results: [Result] = []
-
-    for item in items {
-        // 各高コスト操作の前にチェック
-        try Task.checkCancellation()  // キャンセルされていればスロー
-
-        // またはスローせずにチェック
-        if Task.isCancelled {
-            return results  // 部分的な結果を返す
-        }
-
-        let result = await process(item)
-        results.append(result)
-    }
-
-    return results
-}
-```
-
-#### Task.detached - 現在のコンテキストからのエスケープ
-
-<div class="analogy">
-あなたの部署に報告しない外部請負業者を雇うようなもの。彼らは独立して働き、あなたのオフィスのルールに従わず、結果が必要なときに明示的に調整する必要があります。
-</div>
-
-通常の `Task { }` は現在のアクターコンテキストを継承します - `@MainActor` 上にいる場合、タスクは `@MainActor` 上で実行されます。時々それは望ましくありません、特に UI をブロックする CPU 集約的な作業の場合。`Task.detached` は継承されたコンテキストなしでタスクを作成し、バックグラウンドエグゼキュータで実行します。ただし、控えめに使用してください - ほとんどの場合、適切な `await` ポイントを持つ通常の `Task` で十分で、推論しやすいです。
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item main">MainActor</span>
-  <span class="isolation-legend-item detached">Detached</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment main" style="flex-grow: 10"></div>
-  <div class="segment detached" style="flex-grow: 2"></div>
-  <div class="segment main" style="flex-grow: 1"></div>
-  <div class="segment detached" style="flex-grow: 1"></div>
-  <div class="segment main" style="flex-grow: 3"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 10"></div>
-  <div class="segment detached-highlight" style="flex-grow: 2"></div>
-  <div class="segment" style="flex-grow: 1"></div>
-  <div class="segment detached-highlight" style="flex-grow: 1"></div>
-  <div class="segment" style="flex-grow: 3"></div>
-</div>
-
-```swift
-@MainActor
-class ImageProcessor {
-    func processImage(_ image: UIImage) {
-        // ダメ: これはまだ MainActor コンテキストを継承
-        Task {
-            let filtered = applyFilters(image)  // メインをブロック!
-        }
-
-        // 良い: デタッチされたタスクは独立して実行
-        Task.detached(priority: .userInitiated) {
-            let filtered = await self.applyFilters(image)
-            await MainActor.run {
-                self.displayImage(filtered)
-            }
-        }
-    }
-}
-```
-
-</div>
-
-<div class="warning">
-<h4>Task.detached は通常間違い</h4>
-
-ほとんどの場合、通常の `Task` が必要です。デタッチされたタスクは優先度、タスクローカル値、アクターコンテキストを継承しません。明示的にその分離が必要な場合のみ使用してください。
-</div>
-
-#### @preconcurrency - レガシーコードとの共存
-
-並行処理のために更新されていないモジュールをインポートするときに警告を抑制します:
-
-```swift
-// このインポートからの警告を抑制
-@preconcurrency import OldFramework
-
-// またはプロトコル準拠で
-class MyDelegate: @preconcurrency SomeOldDelegate {
-    // 非 Sendable 要件について警告しない
-}
-```
-
-<div class="tip">
-<h4>@preconcurrency は一時的なもの</h4>
-
-コードを更新している間のブリッジとして使用してください。目標は最終的にそれを削除し、適切な Sendable 準拠を持つことです。
-</div>
-
-## さらなる読み物
-
-このガイドは Swift 並行処理に関する最高のリソースを凝縮しています。
+## 参考資料
 
 <div class="resources">
-<h4>Matt Massicotte のブログ(強く推奨)</h4>
+<h4>Matt Massicotte のブログ（強く推奨）</h4>
 
-- [A Swift Concurrency Glossary](https://www.massicotte.org/concurrency-glossary) - 必須の用語集
-- [An Introduction to Isolation](https://www.massicotte.org/intro-to-isolation/) - コアコンセプト
+- [A Swift Concurrency Glossary](https://www.massicotte.org/concurrency-glossary) - 必須用語
+- [An Introduction to Isolation](https://www.massicotte.org/intro-to-isolation/) - 核心概念
 - [When should you use an actor?](https://www.massicotte.org/actors/) - 実用的なガイダンス
 - [Non-Sendable types are cool too](https://www.massicotte.org/non-sendable/) - なぜシンプルが良いか
-- [Crossing the Boundary](https://www.massicotte.org/crossing-the-boundary/) - 非 Sendable 型との作業
-- [Problematic Swift Concurrency Patterns](https://www.massicotte.org/problematic-patterns/) - 避けるべきこと
-- [Making Mistakes with Swift Concurrency](https://www.massicotte.org/mistakes-with-concurrency/) - エラーから学ぶ
 </div>
 
 <div class="resources">
@@ -1081,14 +667,6 @@ class MyDelegate: @preconcurrency SomeOldDelegate {
 - [Swift 並行処理ドキュメント](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/)
 - [WWDC21: Meet async/await](https://developer.apple.com/videos/play/wwdc2021/10132/)
 - [WWDC21: Protect mutable state with actors](https://developer.apple.com/videos/play/wwdc2021/10133/)
-- [WWDC22: Eliminate data races](https://developer.apple.com/videos/play/wwdc2022/110351/)
-</div>
-
-<div class="resources">
-<h4>チュートリアル</h4>
-
-- [Swift Concurrency by Example - Hacking with Swift](https://www.hackingwithswift.com/quick-start/concurrency)
-- [Async await in Swift - SwiftLee](https://www.avanderlee.com/swift/async-await/)
 </div>
 
   </div>

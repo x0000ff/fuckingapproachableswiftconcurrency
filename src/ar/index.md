@@ -1,248 +1,305 @@
 ---
 layout: base.njk
-title: دليل Swift للتزامن بطريقة سهلة جداً
-description: دليل صادق للتزامن في Swift. تعلم async/await و actors و Sendable و MainActor بنماذج ذهنية بسيطة. بدون مصطلحات، فقط شروحات واضحة.
+title: دليل سهل جداً لتزامن Swift
+description: دليل صادق لتزامن Swift. تعلم async/await والـ actors وSendable وMainActor بنماذج ذهنية بسيطة. بدون مصطلحات، فقط شروحات واضحة.
 lang: ar
 dir: rtl
 nav:
-  isolation: العزل
-  domains: النطاقات
-  patterns: الأنماط
-  errors: الأخطاء
+  async-await: Async/Await
+  tasks: المهام
+  execution: العزل
+  sendable: Sendable
+  putting-it-together: الملخص
+  mistakes: الأخطاء الشائعة
 footer:
-  madeWith: صُنع بالإحباط والحب. لأن التزامن في Swift لا يجب أن يكون مربكاً.
+  madeWith: صُنع بالإحباط والحب. لأن تزامن Swift لا يجب أن يكون مربكاً.
   viewOnGitHub: عرض على GitHub
 ---
 
 <section class="hero">
   <div class="container">
-    <h1>دليل Swift للتزامن<br><span class="accent">بطريقة سهلة جداً</span></h1>
-    <p class="subtitle">افهم أخيراً async/await و actors و Sendable. نماذج ذهنية واضحة، بدون مصطلحات معقدة.</p>
-    <p class="credit">شكر كبير لـ <a href="https://www.massicotte.org/">Matt Massicotte</a> لجعل التزامن في Swift مفهوماً. من إعداد <a href="https://pepicrft.me">Pedro Piñera</a>. وجدت مشكلة؟ <a href="mailto:pedro@tuist.dev">pedro@tuist.dev</a></p>
+    <h1>دليل سهل جداً<br><span class="accent">لتزامن Swift</span></h1>
+    <p class="subtitle">افهم أخيراً async/await والمهام ولماذا المترجم يصرخ عليك.</p>
+    <p class="credit">شكر كبير لـ <a href="https://www.massicotte.org/">Matt Massicotte</a> لجعل تزامن Swift مفهوماً. من إعداد <a href="https://pepicrft.me">Pedro Piñera</a>. وجدت مشكلة؟ <a href="mailto:pedro@tuist.dev">pedro@tuist.dev</a></p>
     <p class="tribute">في تقليد <a href="https://fuckingblocksyntax.com/">fuckingblocksyntax.com</a> و <a href="https://fuckingifcaseletsyntax.com/">fuckingifcaseletsyntax.com</a></p>
-    <p class="cta-tuist">وسّع تطويرك مع <a href="https://tuist.dev">Tuist</a></p>
   </div>
 </section>
 
-<section class="tldr">
+<section id="async-await">
   <div class="container">
 
-## الحقيقة الصريحة
+## [الكود غير المتزامن: async/await](#async-await)
 
-لا توجد ورقة غش للتزامن في Swift. كل إجابة "فقط افعل X" خاطئة في بعض السياقات.
+معظم ما تفعله التطبيقات هو الانتظار. جلب البيانات من خادم - انتظر الرد. قراءة ملف من القرص - انتظر البايتات. استعلام قاعدة بيانات - انتظر النتائج.
 
-**لكن هذه هي الأخبار الجيدة:** بمجرد أن تفهم [العزل](#basics) (قراءة 5 دقائق)، كل شيء يصبح واضحاً. أخطاء المترجم تبدأ في أن تكون منطقية. تتوقف عن محاربة النظام وتبدأ في العمل معه.
+قبل نظام التزامن في Swift، كنت تعبر عن هذا الانتظار باستخدام callbacks أو delegates أو [Combine](https://developer.apple.com/documentation/combine). كلها تعمل، لكن الـ callbacks المتداخلة تصبح صعبة المتابعة، وCombine له منحنى تعليمي حاد.
 
-*يستهدف هذا الدليل Swift 6+. معظم المفاهيم تنطبق على Swift 5.5+، لكن Swift 6 يفرض فحصاً أكثر صرامة للتزامن.*
+`async/await` يعطي Swift طريقة جديدة للتعامل مع الانتظار. بدلاً من الـ callbacks، تكتب كوداً يبدو متسلسلاً - يتوقف مؤقتاً، ينتظر، ويستأنف. خلف الكواليس، يدير runtime الـ Swift هذه التوقفات بكفاءة. لكن جعل تطبيقك يبقى متجاوباً أثناء الانتظار يعتمد على *أين* يعمل الكود، وهو ما سنغطيه لاحقاً.
 
-<a href="#basics" class="read-more">ابدأ بالنموذج الذهني &darr;</a>
-
-  </div>
-</section>
-
-<section id="basics">
-  <div class="container">
-
-## الشيء الوحيد الذي تحتاج إلى فهمه
-
-**[العزل](https://www.massicotte.org/intro-to-isolation/)** هو المفتاح لكل شيء. إنه إجابة Swift على السؤال: *من يُسمح له بلمس هذه البيانات الآن؟*
-
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-فكر في تطبيقك كـ **مبنى مكاتب**. كل مكتب هو **نطاق عزل** - مساحة خاصة حيث يمكن لشخص واحد فقط العمل في وقت واحد. لا يمكنك فقط الدخول إلى مكتب شخص آخر والبدء في إعادة ترتيب مكتبه.
-
-سنبني على هذه الاستعارة طوال الدليل.
-</div>
-
-### لماذا ليس فقط الخيوط؟
-
-لعقود، كتبنا الكود المتزامن بالتفكير في الخيوط. المشكلة؟ **الخيوط لا تمنعك من إطلاق النار على قدمك.** يمكن لخيطين الوصول إلى نفس البيانات في نفس الوقت، مما يتسبب في سباقات البيانات - أخطاء تتعطل بشكل عشوائي ويكاد يكون من المستحيل إعادة إنتاجها.
-
-على الهاتف، قد تفلت من ذلك. على الخادم الذي يتعامل مع آلاف الطلبات المتزامنة، تصبح سباقات البيانات أمراً مؤكداً - عادة ما تظهر في الإنتاج، يوم الجمعة. مع توسع Swift إلى الخوادم وبيئات أخرى عالية التزامن، "الأمل في الأفضل" لا يكفي.
-
-النهج القديم كان دفاعياً: استخدام الأقفال، طوابير الإرسال، الأمل في أنك لم تفوت نقطة.
-
-نهج Swift مختلف: **اجعل سباقات البيانات مستحيلة في وقت الترجمة.** بدلاً من السؤال "على أي خيط هذا؟"، يسأل Swift "من يُسمح له بلمس هذه البيانات الآن؟" هذا هو العزل.
-
-### كيف تتعامل اللغات الأخرى مع هذا
-
-| اللغة | النهج | متى تكتشف الأخطاء |
-|----------|----------|------------------------------|
-| **Swift** | العزل + Sendable | وقت الترجمة |
-| **Rust** | الملكية + مدقق الاستعارة | وقت الترجمة |
-| **Go** | القنوات + كاشف السباق | وقت التشغيل (مع الأدوات) |
-| **Java/Kotlin** | `synchronized`، الأقفال | وقت التشغيل (التعطل) |
-| **JavaScript** | حلقة أحداث أحادية الخيط | يتم تجنبه تماماً |
-| **C/C++** | أقفال يدوية | وقت التشغيل (سلوك غير محدد) |
-
-Swift و Rust هما اللغتان الرئيسيتان الوحيدتان اللتان تكتشفان سباقات البيانات في وقت الترجمة. المقايضة؟ منحنى تعليمي أكثر انحداراً في البداية. لكن بمجرد أن تفهم النموذج، المترجم يدعمك.
-
-تلك الأخطاء المزعجة حول `Sendable` وعزل الـ actor؟ إنها تكتشف الأخطاء التي كانت ستكون تعطلات صامتة من قبل.
-
-  </div>
-</section>
-
-<section id="domains">
-  <div class="container">
-
-## نطاقات العزل
-
-الآن بعد أن فهمت العزل (المكاتب الخاصة)، لنلقِ نظرة على الأنواع المختلفة من المكاتب في مبنى Swift.
-
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-- **مكتب الاستقبال** (`MainActor`) - حيث تحدث جميع تفاعلات العملاء. يوجد واحد فقط، ويتعامل مع كل ما يراه المستخدم.
-- **مكاتب الأقسام** (`actor`) - المحاسبة، القانونية، الموارد البشرية. كل قسم له مكتبه الخاص الذي يحمي بياناته الحساسة الخاصة.
-- **الممرات والمناطق المشتركة** (`nonisolated`) - مساحات مشتركة يمكن لأي شخص المشي من خلالها. لا توجد بيانات خاصة هنا.
-</div>
-
-### MainActor: مكتب الاستقبال
-
-`MainActor` هو نطاق عزل خاص يعمل على الخيط الرئيسي. إنه المكان الذي يحدث فيه كل عمل واجهة المستخدم.
+**الدالة غير المتزامنة** هي دالة قد تحتاج إلى التوقف مؤقتاً. تضع علامة `async` عليها، وعندما تستدعيها، تستخدم `await` لتقول "توقف هنا حتى ينتهي هذا":
 
 ```swift
-@MainActor
-@Observable
-class ViewModel {
-    var items: [Item] = []  // حالة واجهة المستخدم تعيش هنا
+func fetchUser(id: Int) async throws -> User {
+    let url = URL(string: "https://api.example.com/users/\(id)")!
+    let (data, _) = try await URLSession.shared.data(from: url)  // يتعلق هنا
+    return try JSONDecoder().decode(User.self, from: data)
+}
 
-    func refresh() async {
-        let newItems = await fetchItems()
-        self.items = newItems  // آمن - نحن على MainActor
+// استدعاؤها
+let user = try await fetchUser(id: 123)
+// الكود هنا يعمل بعد اكتمال fetchUser
+```
+
+كودك يتوقف مؤقتاً عند كل `await` - هذا يسمى **التعليق**. عندما ينتهي العمل، يستأنف كودك من حيث توقف. التعليق يعطي Swift الفرصة للقيام بعمل آخر أثناء الانتظار.
+
+### الانتظار لـ *عدة أشياء*
+
+ماذا لو احتجت جلب عدة أشياء؟ يمكنك انتظارها واحدة تلو الأخرى:
+
+```swift
+let avatar = try await fetchImage("avatar.jpg")
+let banner = try await fetchImage("banner.jpg")
+let bio = try await fetchBio()
+```
+
+لكن هذا بطيء - كل واحدة تنتظر السابقة لتنتهي. استخدم `async let` لتشغيلها بالتوازي:
+
+```swift
+func loadProfile() async throws -> Profile {
+    async let avatar = fetchImage("avatar.jpg")
+    async let banner = fetchImage("banner.jpg")
+    async let bio = fetchBio()
+
+    // الثلاثة جميعاً يجلبون بالتوازي!
+    return Profile(
+        avatar: try await avatar,
+        banner: try await banner,
+        bio: try await bio
+    )
+}
+```
+
+كل `async let` يبدأ فوراً. الـ `await` يجمع النتائج.
+
+<div class="tip">
+<h4>await تحتاج async</h4>
+
+يمكنك استخدام `await` فقط داخل دالة `async`.
+</div>
+
+  </div>
+</section>
+
+<section id="tasks">
+  <div class="container">
+
+## [إدارة العمل: المهام](#tasks)
+
+**[المهمة](https://developer.apple.com/documentation/swift/task)** هي وحدة عمل غير متزامن يمكنك إدارتها. كتبت دوال async، لكن المهمة هي ما يشغلها فعلاً. إنها كيف تبدأ كوداً async من كود متزامن، وتعطيك التحكم في ذلك العمل: انتظر نتيجته، ألغه، أو اتركه يعمل في الخلفية.
+
+لنقل أنك تبني شاشة ملف شخصي. حمّل الصورة عندما تظهر الواجهة باستخدام معدّل [`.task`](https://developer.apple.com/documentation/swiftui/view/task(priority:_:))، الذي يُلغى تلقائياً عندما تختفي الواجهة:
+
+```swift
+struct ProfileView: View {
+    @State private var avatar: Image?
+
+    var body: some View {
+        avatar
+            .task { avatar = await downloadAvatar() }
     }
 }
 ```
 
-<div class="tip">
-<h4>عند الشك، استخدم MainActor</h4>
+إذا كان المستخدمون يمكنهم التبديل بين الملفات الشخصية، استخدم `.task(id:)` لإعادة التحميل عندما يتغير الاختيار:
 
-بالنسبة لمعظم التطبيقات، وضع علامة على ViewModels والفئات المتعلقة بواجهة المستخدم بـ `@MainActor` هو الاختيار الصحيح. المخاوف المتعلقة بالأداء عادة ما تكون مبالغ فيها - ابدأ هنا، قم بالتحسين فقط إذا قست مشاكل فعلية.
+```swift
+struct ProfileView: View {
+    var userID: String
+    @State private var avatar: Image?
+
+    var body: some View {
+        avatar
+            .task(id: userID) { avatar = await downloadAvatar(for: userID) }
+    }
+}
+```
+
+عندما ينقر المستخدم على "حفظ"، أنشئ مهمة يدوياً:
+
+```swift
+Button("Save") {
+    Task { await saveProfile() }
+}
+```
+
+ماذا لو احتجت تحميل الصورة والسيرة والإحصائيات كلها مرة واحدة؟ استخدم [`TaskGroup`](https://developer.apple.com/documentation/swift/taskgroup) لجلبها بالتوازي:
+
+```swift
+try await withThrowingTaskGroup(of: Void.self) { group in
+    group.addTask { avatar = try await downloadAvatar(for: userID) }
+    group.addTask { bio = try await fetchBio(for: userID) }
+    group.addTask { stats = try await fetchStats(for: userID) }
+    try await group.waitForAll()
+}
+```
+
+المهام داخل المجموعة هي **مهام فرعية**، مرتبطة بالأب. بعض الأشياء لتعرفها:
+
+- **الإلغاء ينتشر**: ألغِ الأب، وجميع الأبناء يُلغون أيضاً
+- **الأخطاء**: خطأ مُلقى يلغي الأشقاء ويُعاد إلقاؤه، لكن فقط عندما تستهلك النتائج بـ `next()` أو `waitForAll()` أو التكرار
+- **ترتيب الاكتمال**: النتائج تصل عندما تنتهي المهام، ليس بالترتيب الذي أضفتها به
+- **ينتظر الجميع**: المجموعة لا ترجع حتى يكتمل كل طفل أو يُلغى
+
+هذا هو **[التزامن المنظم](https://developer.apple.com/videos/play/wwdc2021/10134/)**: عمل منظم في شجرة سهلة الفهم والتنظيف.
+
+  </div>
+</section>
+
+<section id="execution">
+  <div class="container">
+
+## [أين تعمل الأشياء: من الخيوط إلى نطاقات العزل](#execution)
+
+حتى الآن تحدثنا عن *متى* يعمل الكود (async/await) و*كيف ننظمه* (المهام). الآن: **أين يعمل، وكيف نبقيه آمناً؟**
+
+<div class="tip">
+<h4>معظم التطبيقات فقط تنتظر</h4>
+
+معظم كود التطبيقات **مرتبط بالإدخال/الإخراج**. تجلب بيانات من شبكة، *تنتظر* رداً، تفك تشفيرها، وتعرضها. إذا كان لديك عدة عمليات I/O للتنسيق، تلجأ إلى *المهام* و*مجموعات المهام*. العمل الفعلي على المعالج ضئيل. الخيط الرئيسي يمكنه التعامل مع هذا لأن `await` يعلق بدون حجب.
+
+لكن عاجلاً أو آجلاً، سيكون لديك **عمل مرتبط بالمعالج**: تحليل ملف JSON ضخم، معالجة صور، تشغيل حسابات معقدة. هذا العمل لا ينتظر أي شيء خارجي. يحتاج فقط دورات معالج. إذا شغلته على الخيط الرئيسي، واجهتك تتجمد. هنا يصبح "أين يعمل الكود" مهماً فعلاً.
 </div>
 
-### Actors: مكاتب الأقسام
+### العالم القديم: خيارات كثيرة، بدون أمان
 
-`actor` يشبه مكتب القسم - يحمي بياناته الخاصة ويسمح فقط بزائر واحد في كل مرة.
+قبل نظام التزامن في Swift، كان لديك عدة طرق لإدارة التنفيذ:
+
+| الطريقة | ما تفعله | المقايضات |
+|----------|--------------|-----------|
+| [Thread](https://developer.apple.com/documentation/foundation/thread) | تحكم مباشر بالخيط | منخفض المستوى، عرضة للأخطاء، نادراً ما تحتاجه |
+| [GCD](https://developer.apple.com/documentation/dispatch) | طوابير إرسال مع closures | بسيط لكن بدون إلغاء، سهل التسبب في انفجار الخيوط |
+| [OperationQueue](https://developer.apple.com/documentation/foundation/operationqueue) | تبعيات المهام، إلغاء، KVO | تحكم أكثر لكن مطول وثقيل |
+| [Combine](https://developer.apple.com/documentation/combine) | تدفقات تفاعلية | ممتاز لتدفقات الأحداث، منحنى تعليمي حاد |
+
+كل هذه عملت، لكن الأمان كان عليك بالكامل. المترجم لم يستطع المساعدة إذا نسيت الإرسال إلى main، أو إذا طابوران وصلا لنفس البيانات في وقت واحد.
+
+### المشكلة: سباقات البيانات
+
+[سباق البيانات](https://developer.apple.com/documentation/xcode/data-race) يحدث عندما يصل خيطان لنفس الذاكرة في نفس الوقت، وواحد منهم على الأقل يكتب:
+
+```swift
+var count = 0
+
+DispatchQueue.global().async { count += 1 }
+DispatchQueue.global().async { count += 1 }
+
+// سلوك غير محدد: تعطل، فساد ذاكرة، أو قيمة خاطئة
+```
+
+سباقات البيانات هي سلوك غير محدد. يمكنها التعطل، إفساد الذاكرة، أو إنتاج نتائج خاطئة بصمت. تطبيقك يعمل جيداً في الاختبار، ثم يتعطل عشوائياً في الإنتاج. الأدوات التقليدية مثل الأقفال والـ semaphores تساعد، لكنها يدوية وعرضة للأخطاء.
+
+<div class="warning">
+<h4>التزامن يضخم المشكلة</h4>
+
+كلما كان تطبيقك أكثر تزامناً، كلما أصبحت سباقات البيانات أكثر احتمالاً. تطبيق iOS بسيط قد يفلت مع أمان خيوط متساهل. خادم ويب يتعامل مع آلاف الطلبات المتزامنة سيتعطل باستمرار. هذا لماذا أمان Swift في وقت الترجمة يهم أكثر في البيئات عالية التزامن.
+</div>
+
+### التحول: من الخيوط إلى العزل
+
+نموذج التزامن في Swift يسأل سؤالاً مختلفاً. بدلاً من "على أي خيط يجب أن يعمل هذا؟"، يسأل: **"من المسموح له بالوصول لهذه البيانات؟"**
+
+هذا هو [العزل](https://developer.apple.com/documentation/swift/isolation). بدلاً من إرسال العمل يدوياً للخيوط، تعلن حدوداً حول البيانات. المترجم يفرض هذه الحدود في وقت البناء، ليس وقت التشغيل.
+
+<div class="tip">
+<h4>خلف الكواليس</h4>
+
+التزامن في Swift مبني فوق [libdispatch](https://github.com/swiftlang/swift-corelibs-libdispatch) (نفس runtime مثل GCD). الفرق هو طبقة وقت الترجمة: الـ actors والعزل يُفرضان من المترجم، بينما الـ runtime يتعامل مع الجدولة على [تجمع خيوط تعاوني](https://developer.apple.com/videos/play/wwdc2021/10254/) محدود بعدد أنوية معالجك.
+</div>
+
+### نطاقات العزل الثلاثة
+
+**1. MainActor**
+
+[`@MainActor`](https://developer.apple.com/documentation/swift/mainactor) هو [actor عالمي](https://developer.apple.com/documentation/swift/globalactor) يمثل نطاق عزل الخيط الرئيسي. إنه خاص لأن أطر واجهة المستخدم (UIKit، AppKit، SwiftUI) تتطلب الوصول للخيط الرئيسي.
+
+```swift
+@MainActor
+class ViewModel {
+    var items: [Item] = []  // محمي بعزل MainActor
+}
+```
+
+عندما تضع علامة `@MainActor` على شيء، أنت لا تقول "أرسل هذا للخيط الرئيسي." أنت تقول "هذا ينتمي لنطاق عزل الـ main actor." المترجم يفرض أن أي شيء يصل إليه يجب أن يكون على MainActor أو يستخدم `await` لعبور الحدود.
+
+<div class="tip">
+<h4>عند الشك، استخدم @MainActor</h4>
+
+لمعظم التطبيقات، وضع علامة @MainActor على ViewModels هو الاختيار الصحيح. المخاوف من الأداء عادة مبالغ فيها. ابدأ هنا، حسّن فقط إذا قست مشاكل فعلية.
+</div>
+
+**2. Actors**
+
+[الـ actor](https://developer.apple.com/documentation/swift/actor) يحمي حالته القابلة للتغيير. يضمن أن قطعة واحدة فقط من الكود يمكنها الوصول لبياناته في وقت واحد:
 
 ```swift
 actor BankAccount {
     var balance: Double = 0
 
     func deposit(_ amount: Double) {
-        balance += amount  // آمن! متصل واحد فقط في كل مرة
+        balance += amount  // آمن: الـ actor يضمن الوصول الحصري
     }
 }
+
+// من الخارج، يجب أن تنتظر لعبور الحدود
+await account.deposit(100)
 ```
 
-بدون actors، يقرأ خيطان الرصيد = 100، كلاهما يضيف 50، كلاهما يكتب 150 - فقدت 50 دولاراً. مع actors، يقوم Swift تلقائياً بوضع الوصول في قائمة الانتظار وكلا الإيداعين يكتملان بشكل صحيح.
+**الـ Actors ليست خيوطاً.** الـ actor هو حدود عزل. runtime الـ Swift يقرر أي خيط ينفذ كود الـ actor فعلاً. أنت لا تتحكم بذلك، ولا تحتاج لذلك.
 
-<div class="warning">
-<h4>لا تفرط في استخدام actors</h4>
+**3. Nonisolated**
 
-تحتاج إلى actor مخصص فقط عندما تكون **جميع** هذه الشروط الأربعة صحيحة:
-1. لديك حالة قابلة للتغيير غير Sendable (غير آمنة للخيوط)
-2. أماكن متعددة تحتاج إلى الوصول إليها
-3. يجب أن تكون العمليات على تلك الحالة ذرية
-4. لا يمكنها العيش فقط على MainActor
-
-إذا كان أي شرط خاطئاً، فمن المحتمل أنك لا تحتاج إلى actor. يمكن لمعظم حالات واجهة المستخدم العيش على `@MainActor`. [اقرأ المزيد عن متى تستخدم actors](https://www.massicotte.org/actors/).
-</div>
-
-### Nonisolated: الممرات
-
-الكود الموسوم بـ `nonisolated` يشبه الممرات - لا ينتمي إلى أي مكتب ويمكن الوصول إليه من أي مكان.
+الكود الموسوم بـ [`nonisolated`](https://developer.apple.com/documentation/swift/nonisolated) يخرج من عزل الـ actor. يمكن استدعاؤه من أي مكان بدون `await`، لكنه لا يستطيع الوصول لحالة الـ actor المحمية:
 
 ```swift
-actor UserSession {
-    let userId: String          // غير قابل للتغيير - آمن للقراءة من أي مكان
-    var lastActivity: Date      // قابل للتغيير - يحتاج إلى حماية actor
+actor BankAccount {
+    var balance: Double = 0
 
-    nonisolated var displayId: String {
-        "User: \(userId)"       // يقرأ فقط البيانات غير القابلة للتغيير
+    nonisolated func bankName() -> String {
+        "Acme Bank"  // لا وصول لحالة الـ actor، آمن للاستدعاء من أي مكان
     }
 }
 
-// الاستخدام - لا حاجة لـ await لـ nonisolated
-let session = UserSession(userId: "123")
-print(session.displayId)  // يعمل بشكل متزامن!
+let name = account.bankName()  // لا حاجة لـ await
 ```
 
-استخدم `nonisolated` للخصائص المحسوبة التي تقرأ فقط البيانات غير القابلة للتغيير.
+<div class="tip">
+<h4>Approachable Concurrency: احتكاك أقل</h4>
 
-  </div>
-</section>
+[Approachable Concurrency](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html) يبسط النموذج الذهني. لتفعيله، عيّن `SWIFT_VERSION` إلى `6` (أو `5` مع `-enable-upcoming-feature`) و`SWIFT_APPROACHABLE_CONCURRENCY` إلى `YES`. مشاريع Xcode 26 الجديدة تفعّل كليهما افتراضياً.
 
-<section id="propagation">
-  <div class="container">
+- كل شيء يعمل على MainActor إلا إذا قلت غير ذلك
+- عندما تحتاج عملاً مكثفاً على المعالج بعيداً عن الخيط الرئيسي، استخدم `@concurrent`
+- دوال `nonisolated` غير المتزامنة تبقى على actor المستدعي بدلاً من القفز لخيط خلفي
 
-## كيف ينتشر العزل
+كودك يعمل على MainActor. عندما تحتاج عمل خلفي، ضع علامة `@concurrent`. هذا كل شيء.
 
-عندما تضع علامة على نوع بعزل actor، ماذا يحدث لأساليبه؟ ماذا عن الإغلاقات؟ فهم كيفية انتشار العزل هو مفتاح تجنب المفاجآت.
+<pre><code class="language-swift">// يعمل على MainActor (الافتراضي)
+func updateUI() async { }
+
+// يعمل على خيط خلفي (اختياري)
+@concurrent func processLargeFile() async { }</code></pre>
+</div>
 
 <div class="analogy">
 <h4>مبنى المكاتب</h4>
 
-عندما يتم توظيفك في قسم، تعمل في مكتب ذلك القسم افتراضياً. إذا قام قسم التسويق بتوظيفك، فأنت لا تظهر بشكل عشوائي في المحاسبة.
+فكر في تطبيقك كمبنى مكاتب. كل **نطاق عزل** هو مكتب خاص بقفل على الباب. شخص واحد فقط يمكنه أن يكون بالداخل في وقت واحد، يعمل مع المستندات في ذلك المكتب.
 
-وبالمثل، عندما يتم تعريف دالة داخل فئة `@MainActor`، فإنها ترث ذلك العزل. إنها "تعمل في نفس المكتب" مثل والدها.
-</div>
+- **`MainActor`** هو مكتب الاستقبال - حيث تحدث جميع تفاعلات العملاء. يوجد واحد فقط، ويتعامل مع كل ما يراه المستخدم.
+- أنواع **`actor`** هي مكاتب الأقسام - المحاسبة، القانونية، الموارد البشرية. كل يحمي مستنداته الحساسة الخاصة.
+- الكود **`nonisolated`** هو الممر - مساحة مشتركة يمكن لأي شخص المشي فيها، لكن لا توجد مستندات خاصة هناك.
 
-### الفئات ترث عزلها
-
-```swift
-@MainActor
-class ViewModel {
-    var count = 0           // معزول بـ MainActor
-
-    func increment() {      // أيضاً معزول بـ MainActor
-        count += 1
-    }
-}
-```
-
-كل شيء داخل الفئة يرث `@MainActor`. لا تحتاج إلى وضع علامة على كل أسلوب.
-
-### المهام ترث السياق (عادةً)
-
-```swift
-@MainActor
-class ViewModel {
-    func doWork() {
-        Task {
-            // هذا يرث MainActor!
-            self.updateUI()  // آمن، لا حاجة لـ await
-        }
-    }
-}
-```
-
-`Task { }` الذي تم إنشاؤه من سياق `@MainActor` يبقى على `MainActor`. هذا عادة ما تريده.
-
-### Task.detached يكسر الميراث
-
-```swift
-@MainActor
-class ViewModel {
-    func doWork() {
-        Task.detached {
-            // لم يعد على MainActor!
-            await self.updateUI()  // تحتاج await الآن
-        }
-    }
-}
-```
-
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-`Task.detached` يشبه توظيف مقاول خارجي. ليس لديهم بطاقة لمكتبك - يعملون من مساحتهم الخاصة ويجب أن يمروا عبر القنوات المناسبة للوصول إلى أشيائك.
-</div>
-
-<div class="warning">
-<h4>Task.detached عادة ما يكون خاطئاً</h4>
-
-في معظم الأحيان، تريد `Task` عادياً. المهام المنفصلة لا ترث الأولوية، أو القيم المحلية للمهمة، أو سياق actor. استخدمها فقط عندما تحتاج صراحةً إلى ذلك الفصل.
+لا يمكنك فقط الاقتحام لمكتب شخص آخر. تطرق (`await`) وتنتظر حتى يسمحوا لك بالدخول.
 </div>
 
   </div>
@@ -251,263 +308,229 @@ class ViewModel {
 <section id="sendable">
   <div class="container">
 
-## ما الذي يمكن أن يعبر الحدود
+## [ما الذي يمكنه عبور نطاقات العزل: Sendable](#sendable)
 
-الآن بعد أن عرفت نطاقات العزل (المكاتب) وكيف تنتشر، السؤال التالي هو: **ماذا يمكنك تمرير بينها؟**
+نطاقات العزل تحمي البيانات، لكن في النهاية تحتاج لتمرير البيانات بينها. عندما تفعل، Swift يتحقق إذا كان ذلك آمناً.
 
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
+فكر في الأمر: إذا مررت مرجعاً لفئة قابلة للتغيير من actor لآخر، كلا الـ actors يمكنهما تعديلها في نفس الوقت. هذا بالضبط سباق البيانات الذي نحاول منعه. لذا Swift يحتاج أن يعرف: هل هذه البيانات يمكن مشاركتها بأمان؟
 
-ليس كل شيء يمكن أن يغادر المكتب:
+الجواب هو بروتوكول [`Sendable`](https://developer.apple.com/documentation/swift/sendable). إنه علامة تخبر المترجم "هذا النوع آمن للتمرير عبر حدود العزل":
 
-- **النسخ** آمنة للمشاركة - إذا قام القسم القانوني بعمل نسخة من مستند وإرساله إلى المحاسبة، فكلاهما لديه نسخته الخاصة. لا يوجد تضارب.
-- **العقود الأصلية الموقعة** يجب أن تبقى في مكانها - إذا كان بإمكان قسمين كليهما تعديل الأصل، ينتج الفوضى.
-
-بمصطلحات Swift: أنواع **Sendable** هي نسخ (آمنة للمشاركة)، أنواع **non-Sendable** هي الأصول (يجب أن تبقى في مكتب واحد).
-</div>
-
-### Sendable: آمن للمشاركة
-
-هذه الأنواع يمكن أن تعبر حدود العزل بأمان:
+- أنواع **Sendable** يمكنها العبور بأمان (أنواع القيمة، البيانات غير القابلة للتغيير، الـ actors)
+- أنواع **Non-Sendable** لا يمكنها (الفئات ذات الحالة القابلة للتغيير)
 
 ```swift
-// الهياكل مع بيانات غير قابلة للتغيير - مثل النسخ
+// Sendable - إنه نوع قيمة، كل مكان يحصل على نسخة
 struct User: Sendable {
     let id: Int
     let name: String
 }
 
-// Actors تحمي نفسها - يتعاملون مع زوارهم الخاصين
-actor BankAccount { }  // تلقائياً Sendable
-```
-
-**تلقائياً Sendable:**
-- أنواع القيمة (structs، enums) مع خصائص Sendable
-- Actors (يحمون أنفسهم)
-- فئات غير قابلة للتغيير (`final class` مع خصائص `let` فقط)
-
-### Non-Sendable: يجب أن يبقى في مكانه
-
-هذه الأنواع لا يمكن أن تعبر الحدود بأمان:
-
-```swift
-// فئات ذات حالة قابلة للتغيير - مثل المستندات الأصلية
+// Non-Sendable - إنها فئة ذات حالة قابلة للتغيير
 class Counter {
-    var count = 0  // مكتبان يعدلان هذا = كارثة
+    var count = 0  // مكانان يعدلان هذا = كارثة
 }
 ```
 
-**لماذا هذا هو التمييز الرئيسي؟** لأن كل خطأ مترجم ستواجهه يتلخص في: *"أنت تحاول إرسال نوع non-Sendable عبر حدود العزل."*
+### جعل الأنواع Sendable
 
-### عندما يشتكي المترجم
+Swift يستنتج تلقائياً `Sendable` للعديد من الأنواع:
 
-إذا قال Swift أن شيئاً ما ليس Sendable، لديك خيارات:
+- **Structs و enums** مع خصائص `Sendable` فقط هي ضمنياً `Sendable`
+- **الـ Actors** دائماً `Sendable` لأنها تحمي حالتها الخاصة
+- أنواع **`@MainActor`** هي `Sendable` لأن MainActor يسلسل الوصول
 
-1. **اجعله نوع قيمة** - استخدم `struct` بدلاً من `class`
-2. **اعزله** - أبقه على `@MainActor` حتى لا يحتاج إلى العبور
-3. **أبقه non-Sendable** - فقط لا تمرره بين المكاتب
-4. **الملاذ الأخير:** `@unchecked Sendable` - أنت تعد أنه آمن (كن حذراً)
+للفئات، الأمر أصعب. فئة يمكنها المطابقة لـ `Sendable` فقط إذا كانت `final` وجميع خصائصها المخزنة غير قابلة للتغيير:
+
+```swift
+final class APIConfig: Sendable {
+    let baseURL: URL      // غير قابل للتغيير
+    let timeout: Double   // غير قابل للتغيير
+}
+```
+
+إذا كان لديك فئة آمنة للخيوط بوسائل أخرى (أقفال، atomics)، يمكنك استخدام [`@unchecked Sendable`](https://developer.apple.com/documentation/swift/uncheckedsendable) لتخبر المترجم "ثق بي":
+
+```swift
+final class ThreadSafeCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Data] = [:]
+}
+```
+
+<div class="warning">
+<h4>‎@unchecked Sendable هو وعد</h4>
+
+المترجم لن يتحقق من أمان الخيوط. إذا كنت مخطئاً، ستحصل على سباقات بيانات. استخدمه بحذر.
+</div>
 
 <div class="tip">
-<h4>ابدأ بـ non-Sendable</h4>
+<h4>Approachable Concurrency: احتكاك أقل</h4>
 
-[يدافع Matt Massicotte](https://www.massicotte.org/non-sendable/) عن البدء بأنواع عادية، non-Sendable. أضف `Sendable` فقط عندما تحتاج إلى عبور الحدود. يبقى نوع non-Sendable بسيطاً ويتجنب صداع المطابقة.
+مع [Approachable Concurrency](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html)، أخطاء Sendable تصبح أندر بكثير. لتفعيله، عيّن `SWIFT_VERSION` إلى `6` (أو `5` مع `-enable-upcoming-feature`) و`SWIFT_APPROACHABLE_CONCURRENCY` إلى `YES`. مشاريع Xcode 26 الجديدة تفعّل كليهما افتراضياً.
+
+- إذا كان الكود لا يعبر حدود العزل، لا تحتاج Sendable
+- الدوال غير المتزامنة تبقى على actor المستدعي بدلاً من القفز لخيط خلفي
+- المترجم أذكى في اكتشاف متى تُستخدم القيم بأمان
+
+كودك يعمل على MainActor إلا إذا خرجت صراحةً. عندما تحتاج التوازي، ضع علامة `@concurrent` على الدوال وعندها فكر في Sendable.
+</div>
+
+<div class="analogy">
+<h4>النسخ مقابل المستندات الأصلية</h4>
+
+عودة لمبنى المكاتب. عندما تحتاج مشاركة معلومات بين الأقسام:
+
+- **النسخ آمنة** - إذا صنع القانونية نسخة من مستند وأرسلها للمحاسبة، كلاهما لديه نسخته الخاصة. يمكنهم الكتابة عليها، تعديلها، ما شاءوا. لا تضارب.
+- **العقود الأصلية الموقعة يجب أن تبقى مكانها** - إذا كان بإمكان قسمين كليهما تعديل الأصل، تحدث الفوضى. من لديه النسخة الحقيقية؟
+
+أنواع `Sendable` مثل النسخ: آمنة للمشاركة لأن كل مكان يحصل على نسخته المستقلة (أنواع القيمة) أو لأنها غير قابلة للتغيير (لا أحد يستطيع تعديلها). أنواع Non-`Sendable` مثل العقود الأصلية: تمريرها يخلق إمكانية تعديلات متضاربة.
 </div>
 
   </div>
 </section>
 
-<section id="async-await">
+<section id="isolation-inheritance">
   <div class="container">
 
-## كيفية عبور الحدود
+## [كيف يُورَث العزل](#isolation-inheritance)
 
-تفهم نطاقات العزل، تعرف ما يمكن أن يعبرها. الآن: **كيف تتواصل فعلياً بين المكاتب؟**
+رأيت أن نطاقات العزل تحمي البيانات، وSendable يتحكم فيما يعبر بينها. لكن كيف ينتهي الكود في نطاق عزل في الأصل؟
 
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
+عندما تستدعي دالة أو تنشئ closure، العزل يتدفق عبر كودك. مع [Approachable Concurrency](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html)، تطبيقك يبدأ على [`MainActor`](https://developer.apple.com/documentation/swift/mainactor)، وذلك العزل ينتشر للكود الذي تستدعيه، إلا إذا غيّره شيء صراحةً. فهم هذا التدفق يساعدك على التنبؤ أين يعمل الكود ولماذا المترجم أحياناً يشتكي.
 
-لا يمكنك فقط الدخول إلى مكتب آخر. ترسل طلباً وتنتظر استجابة. قد تعمل على أشياء أخرى أثناء الانتظار، لكنك تحتاج إلى تلك الاستجابة قبل أن تتمكن من المتابعة.
+### استدعاءات الدوال
 
-هذا هو `async/await` - إرسال طلب إلى نطاق عزل آخر والتوقف مؤقتاً حتى تحصل على إجابة.
-</div>
-
-### كلمة await
-
-عندما تستدعي دالة على actor آخر، تحتاج إلى `await`:
+عندما تستدعي دالة، عزلها يحدد أين تعمل:
 
 ```swift
-actor DataStore {
-    var items: [Item] = []
-
-    func add(_ item: Item) {
-        items.append(item)
-    }
-}
-
-@MainActor
-class ViewModel {
-    let store = DataStore()
-
-    func addItem(_ item: Item) async {
-        await store.add(item)  // طلب إلى مكتب آخر
-        updateUI()             // عودة إلى مكتبنا
-    }
-}
+@MainActor func updateUI() { }      // دائماً تعمل على MainActor
+func helper() { }                    // ترث عزل المستدعي
+@concurrent func crunch() async { }  // صراحةً تعمل بعيداً عن الـ actor
 ```
 
-`await` تعني: "أرسل هذا الطلب وتوقف مؤقتاً حتى ينتهي. قد أقوم بعمل آخر أثناء الانتظار."
+مع [Approachable Concurrency](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html)، معظم كودك يرث عزل `MainActor`. الدالة تعمل حيث يعمل المستدعي، إلا إذا خرجت صراحةً.
 
-### التعليق، وليس الحظر
+### الـ Closures
 
-<div class="warning">
-<h4>مفهوم خاطئ شائع</h4>
-
-يفترض العديد من المطورين أن إضافة `async` تجعل الكود يعمل في الخلفية. إنها لا تفعل. الكلمة الرئيسية `async` تعني فقط أن الدالة *يمكن أن تتوقف مؤقتاً*. لا تقول شيئاً عن *أين* يعمل.
-</div>
-
-الفكرة الرئيسية هي الفرق بين **الحظر** و **التعليق**:
-
-- **الحظر**: تجلس في غرفة الانتظار تحدق في الجدار. لا شيء آخر يحدث.
-- **التعليق**: تترك رقم هاتفك وتقوم بالمهام. سيتصلون عندما يكونون جاهزين.
-
-<div class="code-tabs">
-<div class="code-tabs-nav">
-<button class="active">الحظر</button>
-<button>التعليق</button>
-</div>
-<div class="code-tab-content active">
-
-```swift
-// الخيط يجلس خاملاً، لا يفعل شيئاً لمدة 5 ثوانٍ
-Thread.sleep(forTimeInterval: 5)
-```
-
-</div>
-<div class="code-tab-content">
-
-```swift
-// يتم تحرير الخيط للقيام بعمل آخر أثناء الانتظار
-try await Task.sleep(for: .seconds(5))
-```
-
-</div>
-</div>
-
-### بدء العمل غير المتزامن من الكود المتزامن
-
-في بعض الأحيان تكون في كود متزامن وتحتاج إلى استدعاء شيء غير متزامن. استخدم `Task`:
+الـ Closures ترث العزل من السياق الذي عُرّفت فيه:
 
 ```swift
 @MainActor
 class ViewModel {
-    func buttonTapped() {  // دالة متزامنة
+    func setup() {
+        let closure = {
+            // ترث MainActor من ViewModel
+            self.updateUI()  // آمن، نفس العزل
+        }
+        closure()
+    }
+}
+```
+
+هذا لماذا closures الـ `Button` في SwiftUI يمكنها تحديث `@State` بأمان: ترث عزل MainActor من الواجهة.
+
+### المهام
+
+`Task { }` ترث عزل الـ actor من حيث أُنشئت:
+
+```swift
+@MainActor
+class ViewModel {
+    func doWork() {
         Task {
-            await loadData()  // الآن يمكننا استخدام await
+            // ترث عزل MainActor
+            self.updateUI()  // آمن، لا حاجة لـ await
         }
     }
 }
 ```
 
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
+هذا عادةً ما تريده. المهمة تعمل على نفس الـ actor مثل الكود الذي أنشأها.
 
-`Task` يشبه تعيين العمل لموظف. يتعامل الموظف مع الطلب (بما في ذلك الانتظار للمكاتب الأخرى) بينما تواصل عملك الفوري.
-</div>
+### كسر الوراثة: Task.detached
 
-  </div>
-</section>
-
-<section id="patterns">
-  <div class="container">
-
-## الأنماط التي تعمل
-
-### نمط طلب الشبكة
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item main">MainActor</span>
-  <span class="isolation-legend-item nonisolated">Nonisolated (استدعاء الشبكة)</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment main" style="flex-grow: 8"></div>
-  <div class="segment nonisolated" style="flex-grow: 2"></div>
-  <div class="segment main" style="flex-grow: 6"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 8"></div>
-  <div class="segment nonisolated-highlight" style="flex-grow: 2"></div>
-  <div class="segment" style="flex-grow: 6"></div>
-</div>
+أحياناً تريد مهمة لا ترث أي سياق:
 
 ```swift
 @MainActor
-@Observable
 class ViewModel {
-    var users: [User] = []
-    var isLoading = false
-
-    func fetchUsers() async {
-        isLoading = true
-
-        // هذا يتوقف مؤقتاً - الخيط حر للقيام بعمل آخر
-        let users = await networkService.getUsers()
-
-        // عودة على MainActor تلقائياً
-        self.users = users
-        isLoading = false
-    }
-}
-```
-
-</div>
-
-لا `DispatchQueue.main.async`. سمة `@MainActor` تتعامل معها.
-
-### العمل المتوازي مع async let
-
-```swift
-func loadProfile() async -> Profile {
-    async let avatar = loadImage("avatar.jpg")
-    async let banner = loadImage("banner.jpg")
-    async let details = loadUserDetails()
-
-    // الثلاثة جميعاً يعملون بالتوازي!
-    return Profile(
-        avatar: await avatar,
-        banner: await banner,
-        details: await details
-    )
-}
-```
-
-### منع النقر المزدوج
-
-هذا النمط يأتي من دليل Matt Massicotte حول [الأنظمة ذات الحالة](https://www.massicotte.org/step-by-step-stateful-systems):
-
-```swift
-@MainActor
-class ButtonViewModel {
-    private var isLoading = false
-
-    func buttonTapped() {
-        // احمِ بشكل متزامن قبل أي عمل غير متزامن
-        guard !isLoading else { return }
-        isLoading = true
-
-        Task {
-            await doExpensiveWork()
-            isLoading = false
+    func doHeavyWork() {
+        Task.detached {
+            // لا عزل actor، تعمل على التجمع التعاوني
+            let result = await self.expensiveCalculation()
+            await MainActor.run {
+                self.data = result  // قفز صريح للخلف
+            }
         }
     }
 }
 ```
 
 <div class="warning">
-<h4>حرج: يجب أن يكون الحارس متزامناً</h4>
+<h4>Task.detached عادةً خاطئ</h4>
 
-إذا وضعت الحارس داخل Task بعد await، هناك نافذة حيث يمكن لنقرتين على الزر أن يبدآ العمل كلاهما. [تعلم المزيد عن الترتيب والتزامن](https://www.massicotte.org/ordering-and-concurrency).
+فريق Swift يوصي بـ [Task.detached كملاذ أخير](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929). لا ترث الأولوية، القيم المحلية للمهمة، أو سياق الـ actor. معظم الوقت، `Task` العادية هي ما تريده. إذا كنت تحتاج عملاً مكثفاً على المعالج بعيداً عن الـ main actor، ضع علامة `@concurrent` على الدالة بدلاً من ذلك.
+</div>
+
+<div class="analogy">
+<h4>المشي عبر المبنى</h4>
+
+عندما تكون في مكتب الاستقبال (MainActor)، وتستدعي شخصاً ليساعدك، يأتي إلى *مكتبك*. يرث موقعك. إذا أنشأت مهمة ("اذهب افعل هذا لي")، ذلك المساعد يبدأ في مكتبك أيضاً.
+
+الطريقة الوحيدة لينتهي شخص في مكتب مختلف هي إذا ذهب صراحةً هناك: "أحتاج العمل في المحاسبة لهذا" (`actor`)، أو "سأتعامل مع هذا في المكتب الخلفي" (`@concurrent`).
+</div>
+
+  </div>
+</section>
+
+<section id="putting-it-together">
+  <div class="container">
+
+## [جمع كل شيء معاً](#putting-it-together)
+
+لنتراجع ونرى كيف تتناسب جميع القطع.
+
+التزامن في Swift قد يشعر بالكثير من المفاهيم: `async/await`، `Task`، الـ actors، `MainActor`، `Sendable`، نطاقات العزل. لكن هناك فكرة واحدة فقط في المركز: **العزل يُورَث افتراضياً**.
+
+مع [Approachable Concurrency](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html) مفعّل، تطبيقك يبدأ على [`MainActor`](https://developer.apple.com/documentation/swift/mainactor). هذه نقطة بدايتك. من هناك:
+
+- كل دالة تستدعيها **ترث** ذلك العزل
+- كل closure تنشئها **تلتقط** ذلك العزل
+- كل [`Task { }`](https://developer.apple.com/documentation/swift/task) تطلقها **ترث** ذلك العزل
+
+لا تحتاج لوضع تعليقات توضيحية على أي شيء. لا تحتاج للتفكير في الخيوط. كودك يعمل على `MainActor`، والعزل ينتشر عبر برنامجك تلقائياً.
+
+عندما تحتاج للخروج من تلك الوراثة، تفعل ذلك صراحةً:
+
+- **`@concurrent`** تقول "شغّل هذا على خيط خلفي"
+- **`actor`** يقول "هذا النوع له نطاق عزل خاص به"
+- **`Task.detached { }`** يقول "ابدأ من جديد، لا ترث شيئاً"
+
+وعندما تمرر بيانات بين نطاقات العزل، Swift يتحقق أنها آمنة. هذا ما [`Sendable`](https://developer.apple.com/documentation/swift/sendable) لأجله: وضع علامة على الأنواع التي يمكنها العبور بأمان عبر الحدود.
+
+هذا كل شيء. هذا النموذج بالكامل:
+
+1. **العزل ينتشر** من `MainActor` عبر كودك
+2. **تخرج صراحةً** عندما تحتاج عمل خلفي أو حالة منفصلة
+3. **Sendable يحرس الحدود** عندما تعبر البيانات بين النطاقات
+
+عندما يشتكي المترجم، يخبرك أن إحدى هذه القواعد انتُهكت. تتبع الوراثة: من أين جاء العزل؟ أين يحاول الكود أن يعمل؟ ما البيانات التي تعبر حدوداً؟ الجواب عادةً واضح بمجرد أن تسأل السؤال الصحيح.
+
+### إلى أين من هنا
+
+الأخبار الجيدة: لا تحتاج لإتقان كل شيء دفعة واحدة.
+
+**معظم التطبيقات تحتاج فقط الأساسيات.** ضع علامة على ViewModels بـ `@MainActor`، استخدم `async/await` لاستدعاءات الشبكة، وأنشئ `Task { }` عندما تحتاج بدء عمل async من نقر زر. هذا كل شيء. هذا يتعامل مع 80% من التطبيقات الحقيقية. المترجم سيخبرك إذا احتجت المزيد.
+
+**عندما تحتاج عملاً متوازياً**، استخدم `async let` لجلب عدة أشياء مرة واحدة، أو [`TaskGroup`](https://developer.apple.com/documentation/swift/taskgroup) عندما يكون عدد المهام ديناميكياً. تعلم التعامل مع الإلغاء بلطف. هذا يغطي التطبيقات ذات تحميل البيانات المعقد أو الميزات في الوقت الفعلي.
+
+**الأنماط المتقدمة تأتي لاحقاً**، إذا أبداً. actors مخصصة للحالة القابلة للتغيير المشتركة، `@concurrent` للمعالجة المكثفة على المعالج، فهم عميق لـ Sendable. هذا كود الأطر، Swift من جانب الخادم، تطبيقات سطح المكتب المعقدة. معظم المطورين لا يحتاجون هذا المستوى أبداً.
+
+<div class="tip">
+<h4>ابدأ بسيطاً</h4>
+
+لا تحسّن لمشاكل ليست لديك. ابدأ بالأساسيات، أطلق تطبيقك، وأضف التعقيد فقط عندما تواجه مشاكل حقيقية. المترجم سيرشدك.
 </div>
 
   </div>
@@ -516,247 +539,94 @@ class ButtonViewModel {
 <section id="mistakes">
   <div class="container">
 
-## الأخطاء الشائعة التي يجب تجنبها
+## [احذر: الأخطاء الشائعة](#mistakes)
 
-هذه هي [الأخطاء الشائعة](https://www.massicotte.org/mistakes-with-concurrency/) التي يرتكبها حتى المطورون المتمرسون:
-
-### التفكير في أن async = الخلفية
-
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-إضافة `async` لا تنقلك إلى مكتب مختلف. أنت لا تزال في مكتب الاستقبال - يمكنك فقط الانتظار للتسليمات الآن دون التجمد في مكانك.
-</div>
+### التفكير أن async = خلفية
 
 ```swift
-// هذا لا يزال يحظر الخيط الرئيسي!
+// هذا لا يزال يحجب الخيط الرئيسي!
 @MainActor
 func slowFunction() async {
-    let result = expensiveCalculation()  // متزامن = حظر
+    let result = expensiveCalculation()  // عمل متزامن = حجب
     data = result
 }
 ```
 
-إذا كنت بحاجة إلى عمل في مكتب آخر، أرسله هناك صراحةً:
-
-```swift
-func slowFunction() async {
-    let result = await Task.detached {
-        expensiveCalculation()  // الآن في مكتب مختلف
-    }.value
-    await MainActor.run { data = result }
-}
-```
+`async` تعني "يمكن أن يتوقف مؤقتاً." العمل الفعلي لا يزال يعمل أينما يعمل. استخدم `@concurrent` (Swift 6.2) أو `Task.detached` للعمل المكثف على المعالج.
 
 ### إنشاء actors كثيرة جداً
 
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-إنشاء مكتب جديد لكل قطعة من البيانات يعني أعمال ورقية لا نهاية لها للتواصل بينها. يمكن أن يحدث معظم عملك في مكتب الاستقبال.
-</div>
-
 ```swift
-// مفرط الهندسة - كل استدعاء يتطلب المشي بين المكاتب
+// مفرط الهندسة
 actor NetworkManager { }
 actor CacheManager { }
 actor DataManager { }
 
-// أفضل - معظم الأشياء يمكن أن تعيش في مكتب الاستقبال
+// أفضل - معظم الأشياء يمكنها العيش على MainActor
 @MainActor
 class AppState { }
 ```
 
-### استخدام MainActor.run في كل مكان
-
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-إذا كنت تستمر في المشي إلى مكتب الاستقبال لكل شيء صغير، فقط اعمل هناك. اجعله جزءاً من وصفك الوظيفي، وليس مهمة مستمرة.
-</div>
-
-```swift
-// لا تفعل هذا - تمشي باستمرار إلى مكتب الاستقبال
-await MainActor.run { doMainActorStuff() }
-
-// افعل هذا - فقط اعمل في مكتب الاستقبال
-@MainActor func doMainActorStuff() { }
-```
+تحتاج actor مخصص فقط عندما يكون لديك حالة قابلة للتغيير مشتركة لا يمكنها العيش على `MainActor`. [قاعدة Matt Massicotte](https://www.massicotte.org/actors/): أدخل actor فقط عندما (1) لديك حالة non-`Sendable`، (2) العمليات على تلك الحالة يجب أن تكون ذرية، و(3) تلك العمليات لا يمكنها العمل على actor موجود. إذا لم تستطع تبريره، استخدم `@MainActor` بدلاً من ذلك.
 
 ### جعل كل شيء Sendable
 
-ليس كل شيء يحتاج إلى أن يكون `Sendable`. إذا كنت تضيف `@unchecked Sendable` في كل مكان، فأنت تصنع نسخاً من الأشياء التي لا تحتاج إلى مغادرة المكتب.
+ليس كل شيء يحتاج لعبور الحدود. إذا كنت تضيف `@unchecked Sendable` في كل مكان، تراجع واسأل إذا كانت البيانات فعلاً تحتاج للانتقال بين نطاقات العزل.
 
-### تجاهل تحذيرات المترجم
-
-كل تحذير من المترجم حول `Sendable` هو الحارس الأمني يخبرك أن شيئاً ما ليس آمناً للحمل بين المكاتب. لا تتجاهلها - [افهمها](https://www.massicotte.org/complete-checking/).
-
-  </div>
-</section>
-
-<section id="errors">
-  <div class="container">
-
-## أخطاء المترجم الشائعة
-
-هذه هي رسائل الخطأ الفعلية التي سترى. كل واحد هو المترجم يحميك من سباق البيانات.
-
-### "Sending 'self.foo' risks causing data races"
-
-<div class="compiler-error">
-Sending 'self.foo' risks causing data races
-</div>
-
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-أنت تحاول حمل مستند أصلي إلى مكتب آخر. إما اصنع نسخة (Sendable) أو أبقه في مكان واحد.
-</div>
-
-**الإصلاح 1:** استخدم `struct` بدلاً من `class`
-
-**الإصلاح 2:** أبقه على actor واحد:
+### استخدام MainActor.run عندما لا تحتاجه
 
 ```swift
+// غير ضروري
+Task {
+    let data = await fetchData()
+    await MainActor.run {
+        self.data = data
+    }
+}
+
+// أفضل - فقط اجعل الدالة @MainActor
 @MainActor
-class MyClass {
-    var foo: SomeType  // يبقى في مكتب الاستقبال
+func loadData() async {
+    self.data = await fetchData()
 }
 ```
 
-### "Non-sendable type cannot cross actor boundary"
+`MainActor.run` نادراً ما يكون الحل الصحيح. إذا كنت تحتاج عزل MainActor، ضع تعليق `@MainActor` على الدالة بدلاً من ذلك. أوضح والمترجم يمكنه مساعدتك أكثر. شاهد [رأي Matt في هذا](https://www.massicotte.org/problematic-patterns/).
 
-<div class="compiler-error">
-Non-sendable type 'MyClass' cannot cross actor boundary
-</div>
-
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-أنت تحاول حمل أصل بين المكاتب. الحارس الأمني أوقفك.
-</div>
-
-**الإصلاح 1:** اجعله struct:
+### حجب تجمع الخيوط التعاوني
 
 ```swift
-// قبل: class (non-Sendable)
-class User { var name: String }
-
-// بعد: struct (Sendable)
-struct User: Sendable { let name: String }
-```
-
-**الإصلاح 2:** اعزله إلى actor واحد:
-
-```swift
-@MainActor
-class User { var name: String }
-```
-
-### "Actor-isolated property cannot be referenced"
-
-<div class="compiler-error">
-Actor-isolated property 'balance' cannot be referenced from the main actor
-</div>
-
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-أنت تحاول الوصول إلى خزانة ملفات مكتب آخر دون المرور عبر القنوات المناسبة.
-</div>
-
-**الإصلاح:** استخدم `await`:
-
-```swift
-// خطأ - الوصول مباشرة
-let value = myActor.balance
-
-// صحيح - طلب مناسب
-let value = await myActor.balance
-```
-
-### "Call to main actor-isolated method in synchronous context"
-
-<div class="compiler-error">
-Call to main actor-isolated instance method 'updateUI()' in a synchronous nonisolated context
-</div>
-
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-أنت تحاول استخدام مكتب الاستقبال دون الانتظار في الطابور.
-</div>
-
-**الإصلاح 1:** اجعل المتصل `@MainActor`:
-
-```swift
-@MainActor
-func doSomething() {
-    updateUI()  // نفس العزل، لا حاجة لـ await
+// لا تفعل هذا أبداً - يخاطر بالجمود
+func badIdea() async {
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        await doWork()
+        semaphore.signal()
+    }
+    semaphore.wait()  // يحجب خيطاً تعاونياً!
 }
 ```
 
-**الإصلاح 2:** استخدم `await`:
+تجمع الخيوط التعاوني في Swift له خيوط محدودة. حجب واحد بـ `DispatchSemaphore` أو `DispatchGroup.wait()` أو استدعاءات مماثلة يمكن أن يسبب جموداً. إذا كنت تحتاج ربط كود متزامن وغير متزامن، استخدم `async let` أو أعد الهيكلة للبقاء غير متزامن بالكامل.
+
+### إنشاء Tasks غير ضرورية
 
 ```swift
-func doSomething() async {
-    await updateUI()
+// إنشاء Task غير ضروري
+func fetchAll() async {
+    Task { await fetchUsers() }
+    Task { await fetchPosts() }
+}
+
+// أفضل - استخدم التزامن المنظم
+func fetchAll() async {
+    async let users = fetchUsers()
+    async let posts = fetchPosts()
+    await (users, posts)
 }
 ```
 
-  </div>
-</section>
-
-<section>
-  <div class="container">
-
-## ثلاثة مستويات من التزامن في Swift
-
-لا تحتاج إلى تعلم كل شيء دفعة واحدة. تقدم عبر هذه المستويات:
-
-<div class="analogy">
-<h4>مبنى المكاتب</h4>
-
-فكر في الأمر كنمو شركة. لا تبدأ بمقر من 50 طابقاً - تبدأ بمكتب.
-</div>
-
-هذه المستويات ليست حدوداً صارمة - أجزاء مختلفة من تطبيقك قد تحتاج مستويات مختلفة. تطبيق في الغالب من المستوى 1 قد يحتوي على ميزة واحدة تحتاج إلى أنماط المستوى 2. هذا جيد. استخدم النهج الأبسط الذي يعمل لكل قطعة.
-
-### المستوى 1: الشركة الناشئة
-
-الجميع يعمل في مكتب الاستقبال. بسيط، مباشر، بدون بيروقراطية.
-
-- استخدم `async/await` لاستدعاءات الشبكة
-- ضع علامة على فئات واجهة المستخدم بـ `@MainActor`
-- استخدم معدّل `.task` في SwiftUI
-
-هذا يتعامل مع 80٪ من التطبيقات. التطبيقات مثل [Things](https://culturedcode.com/things/)، [Bear](https://bear.app/)، [Flighty](https://flighty.com/)، أو [Day One](https://dayoneapp.com/) تقع على الأرجح في هذه الفئة - تطبيقات تجلب البيانات وتعرضها في المقام الأول.
-
-### المستوى 2: الشركة المتنامية
-
-تحتاج إلى التعامل مع أشياء متعددة في وقت واحد. حان الوقت للمشاريع المتوازية وتنسيق الفرق.
-
-- استخدم `async let` للعمل المتوازي
-- استخدم `TaskGroup` للتوازي الديناميكي
-- افهم إلغاء المهام
-
-التطبيقات مثل [Ivory](https://tapbots.com/ivory/)/[Ice Cubes](https://github.com/Dimillian/IceCubesApp) (عملاء Mastodon يديرون خطوطاً زمنية متعددة وتحديثات مباشرة)، [Overcast](https://overcast.fm/) (تنسيق التنزيلات والتشغيل والمزامنة في الخلفية)، أو [Slack](https://slack.com/) (المراسلة في الوقت الفعلي عبر قنوات متعددة) قد تستخدم هذه الأنماط لميزات معينة.
-
-### المستوى 3: المؤسسة
-
-أقسام مخصصة بسياساتها الخاصة. اتصال معقد بين المكاتب.
-
-- إنشاء actors مخصصة للحالة المشتركة
-- فهم عميق لـ Sendable
-- منفذون مخصصون
-
-التطبيقات مثل [Xcode](https://developer.apple.com/xcode/)، [Final Cut Pro](https://www.apple.com/final-cut-pro/)، أو أطر Swift من جانب الخادم مثل [Vapor](https://vapor.codes/) و [Hummingbird](https://hummingbird.codes/) تحتاج على الأرجح إلى هذه الأنماط - حالة مشتركة معقدة، آلاف الاتصالات المتزامنة، أو كود على مستوى الإطار يبني عليه الآخرون.
-
-<div class="tip">
-<h4>ابدأ بسيطاً</h4>
-
-معظم التطبيقات لا تحتاج أبداً إلى المستوى 3. لا تبني مؤسسة عندما تكفي شركة ناشئة.
-</div>
+إذا كنت بالفعل في سياق async، فضّل التزامن المنظم (`async let`، `TaskGroup`) على إنشاء `Task`s غير منظمة. التزامن المنظم يتعامل مع الإلغاء تلقائياً ويجعل الكود أسهل للفهم.
 
   </div>
 </section>
@@ -764,331 +634,39 @@ func doSomething() async {
 <section id="glossary">
   <div class="container">
 
-## المسرد: المزيد من الكلمات الرئيسية التي ستواجهها
+## [ورقة الغش: مرجع سريع](#glossary)
 
-بالإضافة إلى المفاهيم الأساسية، إليك الكلمات الرئيسية الأخرى لتزامن Swift التي سترى في البرية:
-
-| الكلمة الرئيسية | ما تعنيه |
-|---------|---------------|
-| `nonisolated` | يلغي عزل actor - يعمل بدون حماية |
-| `isolated` | يعلن صراحةً أن معلمة تعمل في سياق actor |
-| `@Sendable` | يضع علامة على إغلاق كآمن للتمرير عبر حدود العزل |
-| `Task.detached` | ينشئ مهمة منفصلة تماماً عن السياق الحالي |
-| `AsyncSequence` | تسلسل يمكنك التكرار عليه باستخدام `for await` |
-| `AsyncStream` | طريقة لربط الكود المعتمد على callback بـ async sequences |
-| `withCheckedContinuation` | يربط معالجات الإكمال بـ async/await |
-| `Task.isCancelled` | تحقق مما إذا تم إلغاء المهمة الحالية |
-| `@preconcurrency` | يكتم تحذيرات التزامن للكود القديم |
-| `GlobalActor` | بروتوكول لإنشاء actors مخصصة مثل MainActor |
-
-### متى تستخدم كل واحد
-
-#### nonisolated - قراءة الخصائص المحسوبة
-
-<div class="analogy">
-مثل لوحة الاسم على باب مكتبك - يمكن لأي شخص يمر بها قراءتها دون الحاجة إلى الدخول والانتظار لك.
-</div>
-
-افتراضياً، كل شيء داخل actor معزول - تحتاج إلى `await` للوصول إليه. لكن في بعض الأحيان لديك خصائص آمنة بطبيعتها للقراءة: ثوابت `let` غير قابلة للتغيير، أو خصائص محسوبة تستمد فقط القيم من بيانات آمنة أخرى. وضع علامة على هذه بـ `nonisolated` يسمح للمتصلين بالوصول إليها بشكل متزامن، مما يتجنب النفقات غير الضرورية للـ async.
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item actor">معزول بـ Actor</span>
-  <span class="isolation-legend-item nonisolated">Nonisolated</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment actor" style="flex-grow: 4"></div>
-  <div class="segment nonisolated" style="flex-grow: 4"></div>
-  <div class="segment actor" style="flex-grow: 1"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 4"></div>
-  <div class="segment nonisolated-highlight" style="flex-grow: 4"></div>
-  <div class="segment" style="flex-grow: 1"></div>
-</div>
-
-```swift
-actor UserSession {
-    let userId: String  // غير قابل للتغيير، آمن للقراءة
-    var lastActivity: Date  // قابل للتغيير، يحتاج حماية
-
-    // يمكن استدعاء هذا بدون await
-    nonisolated var displayId: String {
-        "User: \(userId)"  // يقرأ فقط البيانات غير القابلة للتغيير
-    }
-}
-```
-
-</div>
-
-```swift
-// الاستخدام
-let session = UserSession(userId: "123")
-print(session.displayId)  // لا حاجة لـ await!
-```
-
-#### @Sendable - الإغلاقات التي تعبر الحدود
-
-<div class="analogy">
-مثل مغلف مختوم بتعليمات بداخله - يمكن للمغلف السفر بين المكاتب، وكل من يفتحه يمكنه اتباع التعليمات بأمان.
-</div>
-
-عندما يهرب إغلاق ليعمل لاحقاً أو على نطاق عزل مختلف، يحتاج Swift إلى ضمان أنه لن يسبب سباقات البيانات. سمة `@Sendable` تضع علامة على الإغلاقات الآمنة للتمرير عبر الحدود - لا يمكنها التقاط حالة قابلة للتغيير بشكل غير آمن. Swift غالباً ما يستنتج هذا تلقائياً (مثل مع `Task.detached`)، لكن في بعض الأحيان تحتاج إلى إعلانها صراحةً عند تصميم APIs تقبل الإغلاقات.
-
-```swift
-@MainActor
-class ViewModel {
-    var items: [Item] = []
-
-    func processInBackground() {
-        Task.detached {
-            // هذا الإغلاق يعبر من مهمة منفصلة إلى MainActor
-            // يجب أن يكون @Sendable (Swift يستنتج هذا)
-            let processed = await self.heavyProcessing()
-            await MainActor.run {
-                self.items = processed
-            }
-        }
-    }
-}
-
-// @Sendable صريح عند الحاجة
-func runLater(_ work: @Sendable @escaping () -> Void) {
-    DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
-        work()
-    }
-}
-```
-
-#### withCheckedContinuation - ربط APIs القديمة
-
-<div class="analogy">
-مثل مترجم بين نظام المذكرات الورقية القديم والبريد الإلكتروني الحديث. تنتظر بجانب غرفة البريد حتى يقدم النظام القديم استجابة، ثم تعيد إرسالها عبر النظام الجديد.
-</div>
-
-العديد من APIs الأقدم تستخدم معالجات الإكمال بدلاً من async/await. بدلاً من إعادة كتابتها بالكامل، يمكنك لفها باستخدام `withCheckedContinuation`. هذه الدالة تعلق المهمة الحالية، تعطيك كائن استمرارية، وتستأنف عندما تستدعي `continuation.resume()`. البديل "checked" يلتقط أخطاء البرمجة مثل الاستئناف مرتين أو عدم الاستئناف على الإطلاق.
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item main">سياق Async</span>
-  <span class="isolation-legend-item nonisolated">سياق Callback</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment nonisolated" style="flex-grow: 5"></div>
-  <div class="segment main" style="flex-grow: 3"></div>
-  <div class="segment nonisolated" style="flex-grow: 3"></div>
-  <div class="segment main" style="flex-grow: 2"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 5"></div>
-  <div class="segment main-highlight" style="flex-grow: 3"></div>
-  <div class="segment nonisolated-highlight" style="flex-grow: 3"></div>
-  <div class="segment main-highlight" style="flex-grow: 2"></div>
-</div>
-
-```swift
-// API قديمة معتمدة على callback
-func fetchUser(id: String, completion: @escaping (User?) -> Void) {
-    // ... استدعاء الشبكة مع callback
-}
-
-// ملفوفة كـ async
-func fetchUser(id: String) async -> User? {
-    await withCheckedContinuation { continuation in
-        fetchUser(id: id) { user in
-            continuation.resume(returning: user)  // يربط مرة أخرى!
-        }
-    }
-}
-```
-
-</div>
-
-للدوال التي ترمي، استخدم `withCheckedThrowingContinuation`:
-
-```swift
-func fetchUserThrowing(id: String) async throws -> User {
-    try await withCheckedThrowingContinuation { continuation in
-        fetchUser(id: id) { result in
-            switch result {
-            case .success(let user):
-                continuation.resume(returning: user)
-            case .failure(let error):
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-}
-```
-
-#### AsyncStream - ربط مصادر الأحداث
-
-<div class="analogy">
-مثل إعداد إعادة توجيه البريد - في كل مرة تصل رسالة إلى العنوان القديم، يتم توجيهها تلقائياً إلى صندوق بريدك الجديد. يستمر التدفق في التدفق طالما استمر البريد في القدوم.
-</div>
-
-بينما تتعامل `withCheckedContinuation` مع callbacks لمرة واحدة، تقدم العديد من APIs قيماً متعددة بمرور الوقت - أساليب delegate، NotificationCenter، أو أنظمة أحداث مخصصة. `AsyncStream` يربط هذه بـ `AsyncSequence` في Swift، مما يتيح لك استخدام حلقات `for await`. تنشئ تياراً، تخزن استمراريته، وتستدعي `yield()` في كل مرة تصل قيمة جديدة.
-
-```swift
-class LocationTracker: NSObject, CLLocationManagerDelegate {
-    private var continuation: AsyncStream<CLLocation>.Continuation?
-
-    var locations: AsyncStream<CLLocation> {
-        AsyncStream { continuation in
-            self.continuation = continuation
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager,
-                        didUpdateLocations locations: [CLLocation]) {
-        for location in locations {
-            continuation?.yield(location)
-        }
-    }
-}
-
-// الاستخدام
-let tracker = LocationTracker()
-for await location in tracker.locations {
-    print("موقع جديد: \(location)")
-}
-```
-
-#### Task.isCancelled - الإلغاء التعاوني
-
-<div class="analogy">
-مثل التحقق من صندوق بريدك الوارد بحثاً عن مذكرة "توقف عن العمل على هذا" قبل بدء كل خطوة من مشروع كبير. لا يُجبر عليك التوقف - تختار التحقق والاستجابة بأدب.
-</div>
-
-يستخدم Swift الإلغاء التعاوني - عندما يتم إلغاء مهمة، لا تتوقف على الفور. بدلاً من ذلك، يتم تعيين علامة، ومسؤوليتك التحقق منها بشكل دوري. هذا يمنحك السيطرة على التنظيف والنتائج الجزئية. استخدم `Task.checkCancellation()` لرمي على الفور، أو تحقق من `Task.isCancelled` عندما تريد التعامل مع الإلغاء بلطف (مثل إرجاع نتائج جزئية).
-
-```swift
-func processLargeDataset(_ items: [Item]) async throws -> [Result] {
-    var results: [Result] = []
-
-    for item in items {
-        // تحقق قبل كل عملية مكلفة
-        try Task.checkCancellation()  // يرمي إذا تم الإلغاء
-
-        // أو تحقق بدون رمي
-        if Task.isCancelled {
-            return results  // إرجاع النتائج الجزئية
-        }
-
-        let result = await process(item)
-        results.append(result)
-    }
-
-    return results
-}
-```
-
-#### Task.detached - الهروب من السياق الحالي
-
-<div class="analogy">
-مثل توظيف مقاول خارجي لا يتبع قسمك. يعملون بشكل مستقل، لا يتبعون قواعد مكتبك، وعليك التنسيق صراحةً عندما تحتاج إلى النتائج.
-</div>
-
-`Task { }` عادي يرث سياق actor الحالي - إذا كنت على `@MainActor`، تعمل المهمة على `@MainActor`. في بعض الأحيان هذا ليس ما تريده، خاصة للعمل المكثف على المعالج الذي سيحظر واجهة المستخدم. `Task.detached` ينشئ مهمة بدون سياق موروث، تعمل على منفذ في الخلفية. استخدمها بشكل متحفظ رغم ذلك - في معظم الأحيان، `Task` عادي مع نقاط `await` مناسبة كافٍ وأسهل للتفكير فيه.
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item main">MainActor</span>
-  <span class="isolation-legend-item detached">منفصل</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment main" style="flex-grow: 10"></div>
-  <div class="segment detached" style="flex-grow: 2"></div>
-  <div class="segment main" style="flex-grow: 1"></div>
-  <div class="segment detached" style="flex-grow: 1"></div>
-  <div class="segment main" style="flex-grow: 3"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 10"></div>
-  <div class="segment detached-highlight" style="flex-grow: 2"></div>
-  <div class="segment" style="flex-grow: 1"></div>
-  <div class="segment detached-highlight" style="flex-grow: 1"></div>
-  <div class="segment" style="flex-grow: 3"></div>
-</div>
-
-```swift
-@MainActor
-class ImageProcessor {
-    func processImage(_ image: UIImage) {
-        // لا تفعل: هذا لا يزال يرث سياق MainActor
-        Task {
-            let filtered = applyFilters(image)  // يحظر main!
-        }
-
-        // افعل: مهمة منفصلة تعمل بشكل مستقل
-        Task.detached(priority: .userInitiated) {
-            let filtered = await self.applyFilters(image)
-            await MainActor.run {
-                self.displayImage(filtered)
-            }
-        }
-    }
-}
-```
-
-</div>
-
-<div class="warning">
-<h4>Task.detached عادة ما يكون خاطئاً</h4>
-
-في معظم الأحيان، تريد `Task` عادياً. المهام المنفصلة لا ترث الأولوية، أو القيم المحلية للمهمة، أو سياق actor. استخدمها فقط عندما تحتاج صراحةً إلى ذلك الفصل.
-</div>
-
-#### @preconcurrency - التعايش مع الكود القديم
-
-اكتم التحذيرات عند استيراد الوحدات التي لم يتم تحديثها بعد للتزامن:
-
-```swift
-// كتم التحذيرات من هذا الاستيراد
-@preconcurrency import OldFramework
-
-// أو على مطابقة بروتوكول
-class MyDelegate: @preconcurrency SomeOldDelegate {
-    // لن يحذر بشأن متطلبات non-Sendable
-}
-```
-
-<div class="tip">
-<h4>@preconcurrency مؤقت</h4>
-
-استخدمه كجسر أثناء تحديث الكود. الهدف هو إزالته في النهاية والحصول على مطابقة Sendable مناسبة.
-</div>
+| الكلمة المفتاحية | ما تفعله |
+|---------|--------------|
+| `async` | الدالة يمكنها التوقف مؤقتاً |
+| `await` | توقف هنا حتى ينتهي |
+| `Task { }` | ابدأ عملاً async، يرث السياق |
+| `Task.detached { }` | ابدأ عملاً async، بدون سياق موروث |
+| `@MainActor` | يعمل على الخيط الرئيسي |
+| `actor` | نوع بحالة قابلة للتغيير معزولة |
+| `nonisolated` | يخرج من عزل الـ actor |
+| `Sendable` | آمن للتمرير بين نطاقات العزل |
+| `@concurrent` | دائماً يعمل في الخلفية (Swift 6.2+) |
+| `async let` | ابدأ عملاً متوازياً |
+| `TaskGroup` | عمل متوازي ديناميكي |
 
 ## قراءة إضافية
-
-يقطر هذا الدليل أفضل الموارد حول تزامن Swift.
 
 <div class="resources">
 <h4>مدونة Matt Massicotte (موصى به بشدة)</h4>
 
-- [مسرد التزامن في Swift](https://www.massicotte.org/concurrency-glossary) - المصطلحات الأساسية
+- [مسرد تزامن Swift](https://www.massicotte.org/concurrency-glossary) - المصطلحات الأساسية
 - [مقدمة للعزل](https://www.massicotte.org/intro-to-isolation/) - المفهوم الأساسي
-- [متى يجب عليك استخدام actor؟](https://www.massicotte.org/actors/) - إرشادات عملية
+- [متى يجب استخدام actor؟](https://www.massicotte.org/actors/) - إرشادات عملية
 - [أنواع Non-Sendable رائعة أيضاً](https://www.massicotte.org/non-sendable/) - لماذا الأبسط أفضل
-- [عبور الحدود](https://www.massicotte.org/crossing-the-boundary/) - العمل مع أنواع non-Sendable
-- [أنماط التزامن في Swift المشكلة](https://www.massicotte.org/problematic-patterns/) - ما يجب تجنبه
-- [ارتكاب الأخطاء مع التزامن في Swift](https://www.massicotte.org/mistakes-with-concurrency/) - التعلم من الأخطاء
 </div>
 
 <div class="resources">
 <h4>موارد Apple الرسمية</h4>
 
-- [توثيق التزامن في Swift](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/)
+- [توثيق تزامن Swift](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/)
 - [WWDC21: تعرف على async/await](https://developer.apple.com/videos/play/wwdc2021/10132/)
 - [WWDC21: احمِ الحالة القابلة للتغيير مع actors](https://developer.apple.com/videos/play/wwdc2021/10133/)
-- [WWDC22: قضِ على سباقات البيانات](https://developer.apple.com/videos/play/wwdc2022/110351/)
-</div>
-
-<div class="resources">
-<h4>دروس تعليمية</h4>
-
-- [التزامن في Swift بالأمثلة - Hacking with Swift](https://www.hackingwithswift.com/quick-start/concurrency)
-- [Async await في Swift - SwiftLee](https://www.avanderlee.com/swift/async-await/)
 </div>
 
   </div>

@@ -5,10 +5,12 @@ description: Una guía sin rodeos sobre la concurrencia en Swift. Aprende async/
 lang: es
 dir: ltr
 nav:
-  isolation: Aislamiento
-  domains: Dominios
-  patterns: Patrones
-  errors: Errores
+  async-await: Async/Await
+  tasks: Tasks
+  execution: Aislamiento
+  sendable: Sendable
+  putting-it-together: Resumen
+  mistakes: Trampas
 footer:
   madeWith: Hecho con frustración y amor. Porque la concurrencia en Swift no tiene que ser confusa.
   viewOnGitHub: Ver en GitHub
@@ -17,232 +19,287 @@ footer:
 <section class="hero">
   <div class="container">
     <h1>Jodidamente Accesible<br><span class="accent">Swift Concurrency</span></h1>
-    <p class="subtitle">Por fin comprende async/await, actors y Sendable. Modelos mentales claros, sin jerga.</p>
+    <p class="subtitle">Por fin entiende async/await, Tasks, y por qué el compilador no para de gritarte.</p>
     <p class="credit">Enorme agradecimiento a <a href="https://www.massicotte.org/">Matt Massicotte</a> por hacer comprensible la concurrencia en Swift. Recopilado por <a href="https://pepicrft.me">Pedro Piñera</a>. ¿Encontraste un error? <a href="mailto:pedro@tuist.dev">pedro@tuist.dev</a></p>
     <p class="tribute">En la tradición de <a href="https://fuckingblocksyntax.com/">fuckingblocksyntax.com</a> y <a href="https://fuckingifcaseletsyntax.com/">fuckingifcaseletsyntax.com</a></p>
-    <p class="cta-tuist">Escala tu desarrollo con <a href="https://tuist.dev">Tuist</a></p>
   </div>
 </section>
 
-<section class="tldr">
+<section id="async-await">
   <div class="container">
 
-## La Verdad Honesta
+## [Código Async: async/await](#async-await)
 
-No existe una chuleta para la concurrencia en Swift. Cada respuesta de "simplemente haz X" está mal en algún contexto.
+La mayor parte de lo que hacen las apps es esperar. Obtener datos de un servidor - esperar la respuesta. Leer un archivo del disco - esperar los bytes. Consultar una base de datos - esperar los resultados.
 
-**Pero aquí está la buena noticia:** Una vez que entiendas el [aislamiento](#basics) (5 min de lectura), todo encaja. Los errores del compilador empiezan a tener sentido. Dejas de luchar contra el sistema y empiezas a trabajar con él.
+Antes del sistema de concurrencia de Swift, expresabas esta espera con callbacks, delegates, o [Combine](https://developer.apple.com/documentation/combine). Funcionan, pero los callbacks anidados se vuelven difíciles de seguir, y Combine tiene una curva de aprendizaje empinada.
 
-*Esta guía está orientada a Swift 6+. La mayoría de conceptos aplican a Swift 5.5+, pero Swift 6 aplica una verificación de concurrencia más estricta.*
+`async/await` le da a Swift una nueva forma de manejar la espera. En lugar de callbacks, escribes código que parece secuencial - se pausa, espera y continúa. Por debajo, el runtime de Swift gestiona estas pausas de forma eficiente. Pero hacer que tu app realmente siga respondiendo mientras espera depende de *dónde* se ejecuta el código, que cubriremos más adelante.
 
-<a href="#basics" class="read-more">Empieza con el modelo mental &darr;</a>
-
-  </div>
-</section>
-
-<section id="basics">
-  <div class="container">
-
-## Lo Único Que Necesitas Entender
-
-**[El aislamiento](https://www.massicotte.org/intro-to-isolation/)** es la clave de todo. Es la respuesta de Swift a la pregunta: *¿Quién tiene permiso para tocar estos datos ahora mismo?*
-
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-Piensa en tu app como un **edificio de oficinas**. Cada oficina es un **dominio de aislamiento** - un espacio privado donde solo una persona puede trabajar a la vez. No puedes simplemente irrumpir en la oficina de otra persona y empezar a reorganizar su escritorio.
-
-Construiremos sobre esta analogía a lo largo de la guía.
-</div>
-
-### ¿Por Qué No Solo Hilos?
-
-Durante décadas, escribimos código concurrente pensando en hilos. ¿El problema? **Los hilos no te impiden dispararte en el pie.** Dos hilos pueden acceder a los mismos datos simultáneamente, causando data races - bugs que crashean aleatoriamente y son casi imposibles de reproducir.
-
-En un teléfono, quizás te salgas con la tuya. En un servidor manejando miles de peticiones concurrentes, los data races se vuelven una certeza - usualmente apareciendo en producción, un viernes. A medida que Swift se expande a servidores y otros entornos altamente concurrentes, "esperar lo mejor" no es suficiente.
-
-El enfoque antiguo era defensivo: usar locks, dispatch queues, esperar no haber olvidado nada.
-
-El enfoque de Swift es diferente: **hacer imposibles los data races en tiempo de compilación.** En lugar de preguntar "¿en qué hilo está esto?", Swift pregunta "¿quién tiene permiso para tocar estos datos ahora mismo?" Eso es el aislamiento.
-
-### Cómo Otros Lenguajes Manejan Esto
-
-| Lenguaje | Enfoque | Cuándo descubres los bugs |
-|----------|---------|---------------------------|
-| **Swift** | Aislamiento + Sendable | Tiempo de compilación |
-| **Rust** | Ownership + borrow checker | Tiempo de compilación |
-| **Go** | Channels + detector de races | Runtime (con herramientas) |
-| **Java/Kotlin** | `synchronized`, locks | Runtime (crashes) |
-| **JavaScript** | Event loop single-threaded | Evitado completamente |
-| **C/C++** | Locks manuales | Runtime (comportamiento indefinido) |
-
-Swift y Rust son los únicos lenguajes mainstream que detectan data races en tiempo de compilación. ¿El trade-off? Una curva de aprendizaje más empinada al principio. Pero una vez que entiendes el modelo, el compilador te respalda.
-
-¿Esos molestos errores sobre `Sendable` y aislamiento de actor? Están detectando bugs que antes habrían sido crashes silenciosos.
-
-  </div>
-</section>
-
-<section id="domains">
-  <div class="container">
-
-## Los Dominios de Aislamiento
-
-Ahora que entiendes el aislamiento (oficinas privadas), veamos los diferentes tipos de oficinas en el edificio de Swift.
-
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-- **La recepción** (`MainActor`) - donde ocurren todas las interacciones con clientes. Solo hay una, y maneja todo lo que el usuario ve.
-- **Oficinas de departamento** (`actor`) - contabilidad, legal, RRHH. Cada departamento tiene su propia oficina protegiendo sus propios datos sensibles.
-- **Pasillos y áreas comunes** (`nonisolated`) - espacios compartidos por donde cualquiera puede caminar. Sin datos privados aquí.
-</div>
-
-### MainActor: La Recepción
-
-El `MainActor` es un dominio de aislamiento especial que se ejecuta en el hilo principal. Es donde ocurre todo el trabajo de UI.
+Una **función async** es una que podría necesitar pausarse. La marcas con `async`, y cuando la llamas, usas `await` para decir "pausa aquí hasta que termine":
 
 ```swift
-@MainActor
-@Observable
-class ViewModel {
-    var items: [Item] = []  // El estado de UI vive aquí
+func fetchUser(id: Int) async throws -> User {
+    let url = URL(string: "https://api.example.com/users/\(id)")!
+    let (data, _) = try await URLSession.shared.data(from: url)  // Se suspende aquí
+    return try JSONDecoder().decode(User.self, from: data)
+}
 
-    func refresh() async {
-        let newItems = await fetchItems()
-        self.items = newItems  // Seguro - estamos en MainActor
+// Llamándola
+let user = try await fetchUser(id: 123)
+// El código aquí se ejecuta después de que fetchUser complete
+```
+
+Tu código se pausa en cada `await` - esto se llama **suspensión**. Cuando el trabajo termina, tu código continúa justo donde lo dejó. La suspensión le da a Swift la oportunidad de hacer otro trabajo mientras espera.
+
+### Esperando por *todos ellos*
+
+¿Y si necesitas obtener varias cosas? Podrías esperarlas una por una:
+
+```swift
+let avatar = try await fetchImage("avatar.jpg")
+let banner = try await fetchImage("banner.jpg")
+let bio = try await fetchBio()
+```
+
+Pero eso es lento - cada una espera a que la anterior termine. Usa `async let` para ejecutarlas en paralelo:
+
+```swift
+func loadProfile() async throws -> Profile {
+    async let avatar = fetchImage("avatar.jpg")
+    async let banner = fetchImage("banner.jpg")
+    async let bio = fetchBio()
+
+    // ¡Las tres se están obteniendo en paralelo!
+    return Profile(
+        avatar: try await avatar,
+        banner: try await banner,
+        bio: try await bio
+    )
+}
+```
+
+Cada `async let` comienza inmediatamente. El `await` recoge los resultados.
+
+<div class="tip">
+<h4>await necesita async</h4>
+
+Solo puedes usar `await` dentro de una función `async`.
+</div>
+
+  </div>
+</section>
+
+<section id="tasks">
+  <div class="container">
+
+## [Gestionando Trabajo: Tasks](#tasks)
+
+Un **[Task](https://developer.apple.com/documentation/swift/task)** es una unidad de trabajo async que puedes gestionar. Has escrito funciones async, pero un Task es lo que realmente las ejecuta. Es cómo inicias código async desde código síncrono, y te da control sobre ese trabajo: esperar su resultado, cancelarlo, o dejarlo ejecutar en segundo plano.
+
+Digamos que estás construyendo una pantalla de perfil. Carga el avatar cuando aparece la vista usando el modificador [`.task`](https://developer.apple.com/documentation/swiftui/view/task(priority:_:)), que se cancela automáticamente cuando la vista desaparece:
+
+```swift
+struct ProfileView: View {
+    @State private var avatar: Image?
+
+    var body: some View {
+        avatar
+            .task { avatar = await downloadAvatar() }
     }
 }
 ```
 
-<div class="tip">
-<h4>En caso de duda, usa MainActor</h4>
+Si los usuarios pueden cambiar entre perfiles, usa `.task(id:)` para recargar cuando cambie la selección:
 
-Para la mayoría de apps, marcar tus ViewModels y clases relacionadas con UI con `@MainActor` es la elección correcta. Las preocupaciones de rendimiento suelen estar exageradas - empieza aquí, optimiza solo si mides problemas reales.
+```swift
+struct ProfileView: View {
+    var userID: String
+    @State private var avatar: Image?
+
+    var body: some View {
+        avatar
+            .task(id: userID) { avatar = await downloadAvatar(for: userID) }
+    }
+}
+```
+
+Cuando el usuario toca "Guardar", crea un Task manualmente:
+
+```swift
+Button("Guardar") {
+    Task { await saveProfile() }
+}
+```
+
+¿Y si necesitas cargar el avatar, la bio y las estadísticas a la vez? Usa un [`TaskGroup`](https://developer.apple.com/documentation/swift/taskgroup) para obtenerlos en paralelo:
+
+```swift
+try await withThrowingTaskGroup(of: Void.self) { group in
+    group.addTask { avatar = try await downloadAvatar(for: userID) }
+    group.addTask { bio = try await fetchBio(for: userID) }
+    group.addTask { stats = try await fetchStats(for: userID) }
+    try await group.waitForAll()
+}
+```
+
+Los Tasks dentro de un grupo son **tasks hijos**, vinculados al padre. Algunas cosas a saber:
+
+- **La cancelación se propaga**: cancela el padre, y todos los hijos se cancelan también
+- **Errores**: un error lanzado cancela a los hermanos y se relanza, pero solo cuando consumes resultados con `next()`, `waitForAll()`, o iteración
+- **Orden de completado**: los resultados llegan según terminan los tasks, no en el orden en que los añadiste
+- **Espera a todos**: el grupo no retorna hasta que cada hijo complete o sea cancelado
+
+Esto es **[concurrencia estructurada](https://developer.apple.com/videos/play/wwdc2021/10134/)**: trabajo organizado en un árbol que es fácil de entender y limpiar.
+
+  </div>
+</section>
+
+<section id="execution">
+  <div class="container">
+
+## [Dónde Se Ejecutan Las Cosas: De Hilos a Dominios de Aislamiento](#execution)
+
+Hasta ahora hemos hablado de *cuándo* se ejecuta el código (async/await) y *cómo organizarlo* (Tasks). Ahora: **¿dónde se ejecuta, y cómo lo mantenemos seguro?**
+
+<div class="tip">
+<h4>La mayoría de las apps solo esperan</h4>
+
+La mayor parte del código de apps está **limitado por I/O**. Obtienes datos de una red, *await* una respuesta, la decodificas y la muestras. Si tienes múltiples operaciones I/O que coordinar, recurres a *tasks* y *task groups*. El trabajo real de CPU es mínimo. El hilo principal puede manejar esto bien porque `await` suspende sin bloquear.
+
+Pero tarde o temprano, tendrás **trabajo intensivo de CPU**: parsear un archivo JSON gigante, procesar imágenes, ejecutar cálculos complejos. Este trabajo no espera nada externo. Solo necesita ciclos de CPU. Si lo ejecutas en el hilo principal, tu UI se congela. Aquí es donde "dónde se ejecuta el código" realmente importa.
 </div>
 
-### Actors: Oficinas de Departamento
+### El Viejo Mundo: Muchas Opciones, Sin Seguridad
 
-Un `actor` es como una oficina de departamento - protege sus propios datos y solo permite un visitante a la vez.
+Antes del sistema de concurrencia de Swift, tenías varias formas de gestionar la ejecución:
+
+| Enfoque | Qué hace | Compromisos |
+|---------|----------|-------------|
+| [Thread](https://developer.apple.com/documentation/foundation/thread) | Control directo de hilos | Bajo nivel, propenso a errores, raramente necesario |
+| [GCD](https://developer.apple.com/documentation/dispatch) | Colas de dispatch con closures | Simple pero sin cancelación, fácil causar explosión de hilos |
+| [OperationQueue](https://developer.apple.com/documentation/foundation/operationqueue) | Dependencias de tasks, cancelación, KVO | Más control pero verboso y pesado |
+| [Combine](https://developer.apple.com/documentation/combine) | Streams reactivos | Genial para flujos de eventos, curva de aprendizaje empinada |
+
+Todos estos funcionaban, pero la seguridad era enteramente tu responsabilidad. El compilador no podía ayudarte si olvidabas despachar a main, o si dos colas accedían a los mismos datos simultáneamente.
+
+### El Problema: Data Races
+
+Un [data race](https://developer.apple.com/documentation/xcode/data-race) ocurre cuando dos hilos acceden a la misma memoria al mismo tiempo, y al menos uno está escribiendo:
+
+```swift
+var count = 0
+
+DispatchQueue.global().async { count += 1 }
+DispatchQueue.global().async { count += 1 }
+
+// Comportamiento indefinido: crash, corrupción de memoria, o valor incorrecto
+```
+
+Los data races son comportamiento indefinido. Pueden crashear, corromper memoria, o producir silenciosamente resultados incorrectos. Tu app funciona bien en testing, luego crashea aleatoriamente en producción. Las herramientas tradicionales como locks y semáforos ayudan, pero son manuales y propensas a errores.
+
+<div class="warning">
+<h4>La concurrencia amplifica el problema</h4>
+
+Cuanto más concurrente es tu app, más probables se vuelven los data races. Una app iOS simple podría salirse con la suya con thread safety descuidado. Un servidor web manejando miles de peticiones simultáneas crasheará constantemente. Por eso la seguridad en tiempo de compilación de Swift importa más en entornos de alta concurrencia.
+</div>
+
+### El Cambio: De Hilos a Aislamiento
+
+El modelo de concurrencia de Swift hace una pregunta diferente. En lugar de "¿en qué hilo debería ejecutarse esto?", pregunta: **"¿quién tiene permiso para acceder a estos datos?"**
+
+Esto es [aislamiento](https://developer.apple.com/documentation/swift/isolation). En lugar de despachar trabajo manualmente a hilos, declaras límites alrededor de los datos. El compilador hace cumplir estos límites en tiempo de compilación, no en runtime.
+
+<div class="tip">
+<h4>Bajo el capó</h4>
+
+Swift Concurrency está construido sobre [libdispatch](https://github.com/swiftlang/swift-corelibs-libdispatch) (el mismo runtime que GCD). La diferencia es la capa de tiempo de compilación: los actors y el aislamiento son impuestos por el compilador, mientras que el runtime maneja la programación en un [pool de hilos cooperativo](https://developer.apple.com/videos/play/wwdc2021/10254/) limitado a la cantidad de núcleos de tu CPU.
+</div>
+
+### Los Tres Dominios de Aislamiento
+
+**1. MainActor**
+
+[`@MainActor`](https://developer.apple.com/documentation/swift/mainactor) es un [actor global](https://developer.apple.com/documentation/swift/globalactor) que representa el dominio de aislamiento del hilo principal. Es especial porque los frameworks de UI (UIKit, AppKit, SwiftUI) requieren acceso al hilo principal.
+
+```swift
+@MainActor
+class ViewModel {
+    var items: [Item] = []  // Protegido por aislamiento de MainActor
+}
+```
+
+Cuando marcas algo con `@MainActor`, no estás diciendo "despacha esto al hilo principal". Estás diciendo "esto pertenece al dominio de aislamiento del main actor". El compilador asegura que cualquier cosa que lo acceda debe estar en MainActor o `await` para cruzar el límite.
+
+<div class="tip">
+<h4>En caso de duda, usa @MainActor</h4>
+
+Para la mayoría de apps, marcar tus ViewModels con `@MainActor` es la elección correcta. Las preocupaciones de rendimiento suelen estar exageradas. Empieza aquí, optimiza solo si mides problemas reales.
+</div>
+
+**2. Actors**
+
+Un [actor](https://developer.apple.com/documentation/swift/actor) protege su propio estado mutable. Garantiza que solo un trozo de código puede acceder a sus datos a la vez:
 
 ```swift
 actor BankAccount {
     var balance: Double = 0
 
     func deposit(_ amount: Double) {
-        balance += amount  // ¡Seguro! Solo un llamador a la vez
+        balance += amount  // Seguro: el actor garantiza acceso exclusivo
     }
 }
+
+// Desde fuera, debes hacer await para cruzar el límite
+await account.deposit(100)
 ```
 
-Sin actors, dos hilos leen balance = 100, ambos suman 50, ambos escriben 150 - perdiste $50. Con actors, Swift automáticamente encola el acceso y ambos depósitos se completan correctamente.
+**Los actors no son hilos.** Un actor es un límite de aislamiento. El runtime de Swift decide qué hilo realmente ejecuta el código del actor. Tú no controlas eso, y no necesitas hacerlo.
 
-<div class="warning">
-<h4>No abuses de los actors</h4>
+**3. Nonisolated**
 
-Necesitas un actor personalizado solo cuando **las cuatro** condiciones son verdaderas:
-1. Tienes estado mutable no-Sendable (no thread-safe)
-2. Múltiples lugares necesitan acceder a él
-3. Las operaciones sobre ese estado deben ser atómicas
-4. No puede simplemente vivir en MainActor
-
-Si alguna condición es falsa, probablemente no necesitas un actor. La mayoría del estado de UI puede vivir en `@MainActor`. [Lee más sobre cuándo usar actors](https://www.massicotte.org/actors/).
-</div>
-
-### Nonisolated: Los Pasillos
-
-El código marcado como `nonisolated` es como los pasillos - no pertenece a ninguna oficina y puede ser accedido desde cualquier lugar.
+El código marcado [`nonisolated`](https://developer.apple.com/documentation/swift/nonisolated) opta por salir del aislamiento del actor. Puede ser llamado desde cualquier lugar sin `await`, pero no puede acceder al estado protegido del actor:
 
 ```swift
-actor UserSession {
-    let userId: String          // Inmutable - seguro de leer desde cualquier lugar
-    var lastActivity: Date      // Mutable - necesita protección del actor
+actor BankAccount {
+    var balance: Double = 0
 
-    nonisolated var displayId: String {
-        "User: \(userId)"       // Solo lee datos inmutables
+    nonisolated func bankName() -> String {
+        "Acme Bank"  // No accede al estado del actor, seguro llamar desde cualquier lugar
     }
 }
 
-// Uso - no se necesita await para nonisolated
-let session = UserSession(userId: "123")
-print(session.displayId)  // ¡Funciona síncronamente!
+let name = account.bankName()  // No se necesita await
 ```
 
-Usa `nonisolated` para propiedades computadas que solo leen datos inmutables.
+<div class="tip">
+<h4>Approachable Concurrency: Menos Fricción</h4>
 
-  </div>
-</section>
+[Approachable Concurrency](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html) simplifica el modelo mental. Para habilitarlo, configura `SWIFT_VERSION` a `6` (o `5` con `-enable-upcoming-feature`) y `SWIFT_APPROACHABLE_CONCURRENCY` a `YES`. Los nuevos proyectos de Xcode 26 tienen ambos habilitados por defecto.
 
-<section id="propagation">
-  <div class="container">
+- Todo se ejecuta en MainActor a menos que digas lo contrario
+- Cuando necesites trabajo intensivo de CPU fuera del hilo principal, usa `@concurrent`
+- Las funciones async `nonisolated` permanecen en el actor del llamador en lugar de saltar a un hilo de fondo
 
-## Cómo Se Propaga el Aislamiento
+Tu código se ejecuta en MainActor. Cuando necesitas trabajo en segundo plano, márcalo `@concurrent`. Eso es todo.
 
-Cuando marcas un tipo con un aislamiento de actor, ¿qué pasa con sus métodos? ¿Y con los closures? Entender cómo se propaga el aislamiento es clave para evitar sorpresas.
+<pre><code class="language-swift">// Se ejecuta en MainActor (el default)
+func updateUI() async { }
+
+// Se ejecuta en hilo de fondo (opt-in)
+@concurrent func processLargeFile() async { }</code></pre>
+</div>
 
 <div class="analogy">
 <h4>El Edificio de Oficinas</h4>
 
-Cuando te contratan en un departamento, trabajas en la oficina de ese departamento por defecto. Si el departamento de Marketing te contrata, no apareces aleatoriamente en Contabilidad.
+Piensa en tu app como un edificio de oficinas. Cada **dominio de aislamiento** es una oficina privada con cerradura en la puerta. Solo una persona puede estar dentro a la vez, trabajando con los documentos de esa oficina.
 
-De manera similar, cuando una función se define dentro de una clase `@MainActor`, hereda ese aislamiento. "Trabaja en la misma oficina" que su padre.
-</div>
+- **`MainActor`** es la recepción - donde ocurren todas las interacciones con clientes. Solo hay una, y maneja todo lo que el usuario ve.
+- Los tipos **`actor`** son oficinas de departamento - Contabilidad, Legal, RRHH. Cada uno protege sus propios documentos sensibles.
+- El código **`nonisolated`** es el pasillo - espacio compartido por donde cualquiera puede caminar, pero ningún documento privado vive ahí.
 
-### Las Clases Heredan Su Aislamiento
-
-```swift
-@MainActor
-class ViewModel {
-    var count = 0           // Aislado en MainActor
-
-    func increment() {      // También aislado en MainActor
-        count += 1
-    }
-}
-```
-
-Todo dentro de la clase hereda `@MainActor`. No necesitas marcar cada método.
-
-### Los Tasks Heredan el Contexto (Usualmente)
-
-```swift
-@MainActor
-class ViewModel {
-    func doWork() {
-        Task {
-            // ¡Esto hereda MainActor!
-            self.updateUI()  // Seguro, no se necesita await
-        }
-    }
-}
-```
-
-Un `Task { }` creado desde un contexto `@MainActor` se queda en `MainActor`. Esto es usualmente lo que quieres.
-
-### Task.detached Rompe la Herencia
-
-```swift
-@MainActor
-class ViewModel {
-    func doWork() {
-        Task.detached {
-            // ¡YA NO está en MainActor!
-            await self.updateUI()  // Ahora necesita await
-        }
-    }
-}
-```
-
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-`Task.detached` es como contratar a un contratista externo. No tienen credencial para tu oficina - trabajan desde su propio espacio y deben pasar por canales apropiados para acceder a tus cosas.
-</div>
-
-<div class="warning">
-<h4>Task.detached usualmente está mal</h4>
-
-La mayoría del tiempo, quieres un `Task` regular. Los tasks detached no heredan prioridad, valores task-local, o contexto de actor. Úsalos solo cuando explícitamente necesites esa separación.
+No puedes simplemente irrumpir en la oficina de alguien. Tocas (`await`) y esperas a que te dejen entrar.
 </div>
 
   </div>
@@ -251,263 +308,229 @@ La mayoría del tiempo, quieres un `Task` regular. Los tasks detached no heredan
 <section id="sendable">
   <div class="container">
 
-## Qué Puede Cruzar Fronteras
+## [Qué Puede Cruzar Dominios de Aislamiento: Sendable](#sendable)
 
-Ahora que sabes sobre dominios de aislamiento (oficinas) y cómo se propagan, la siguiente pregunta es: **¿qué puedes pasar entre ellos?**
+Los dominios de aislamiento protegen los datos, pero eventualmente necesitas pasar datos entre ellos. Cuando lo haces, Swift verifica si es seguro.
 
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
+Piénsalo: si pasas una referencia a una clase mutable de un actor a otro, ambos actores podrían modificarla simultáneamente. Eso es exactamente el data race que estamos tratando de prevenir. Así que Swift necesita saber: ¿se pueden compartir estos datos de forma segura?
 
-No todo puede salir de una oficina:
+La respuesta es el protocolo [`Sendable`](https://developer.apple.com/documentation/swift/sendable). Es un marcador que le dice al compilador "este tipo es seguro para pasar a través de límites de aislamiento":
 
-- **Las fotocopias** son seguras de compartir - si Legal hace una copia de un documento y la envía a Contabilidad, ambos tienen su propia copia. Sin conflicto.
-- **Los contratos originales firmados** deben quedarse donde están - si dos departamentos pudieran modificar el original, se produce el caos.
-
-En términos de Swift: los tipos **Sendable** son fotocopias (seguras de compartir), los tipos **no-Sendable** son originales (deben quedarse en una oficina).
-</div>
-
-### Sendable: Seguro para Compartir
-
-Estos tipos pueden cruzar fronteras de aislamiento de forma segura:
+- Los tipos **Sendable** pueden cruzar de forma segura (tipos de valor, datos inmutables, actors)
+- Los tipos **No-Sendable** no pueden (clases con estado mutable)
 
 ```swift
-// Structs con datos inmutables - como fotocopias
+// Sendable - es un tipo de valor, cada lugar obtiene una copia
 struct User: Sendable {
     let id: Int
     let name: String
 }
 
-// Los actors se protegen a sí mismos - manejan sus propios visitantes
-actor BankAccount { }  // Automáticamente Sendable
-```
-
-**Automáticamente Sendable:**
-- Tipos de valor (structs, enums) con propiedades Sendable
-- Actors (se protegen a sí mismos)
-- Clases inmutables (`final class` con solo propiedades `let`)
-
-### No-Sendable: Deben Quedarse
-
-Estos tipos no pueden cruzar fronteras de forma segura:
-
-```swift
-// Clases con estado mutable - como documentos originales
+// No-Sendable - es una clase con estado mutable
 class Counter {
-    var count = 0  // Dos oficinas modificando esto = desastre
+    var count = 0  // Dos lugares modificando esto = desastre
 }
 ```
 
-**¿Por qué es esta la distinción clave?** Porque cada error del compilador que encontrarás se reduce a: *"Estás intentando enviar un tipo no-Sendable a través de una frontera de aislamiento."*
+### Haciendo Tipos Sendable
 
-### Cuando el Compilador Se Queja
+Swift infiere automáticamente `Sendable` para muchos tipos:
 
-Si Swift dice que algo no es Sendable, tienes opciones:
+- **Structs y enums** con solo propiedades `Sendable` son implícitamente `Sendable`
+- **Actors** siempre son `Sendable` porque protegen su propio estado
+- **Tipos `@MainActor`** son `Sendable` porque MainActor serializa el acceso
 
-1. **Hazlo un tipo de valor** - usa `struct` en lugar de `class`
-2. **Aíslalo** - mantenlo en `@MainActor` para que no necesite cruzar
-3. **Mantenlo no-Sendable** - simplemente no lo pases entre oficinas
-4. **Último recurso:** `@unchecked Sendable` - prometes que es seguro (ten cuidado)
+Para clases, es más difícil. Una clase solo puede conformar a `Sendable` si es `final` y todas sus propiedades almacenadas son inmutables:
+
+```swift
+final class APIConfig: Sendable {
+    let baseURL: URL      // Inmutable
+    let timeout: Double   // Inmutable
+}
+```
+
+Si tienes una clase que es thread-safe por otros medios (locks, atómicos), puedes usar [`@unchecked Sendable`](https://developer.apple.com/documentation/swift/uncheckedsendable) para decirle al compilador "confía en mí":
+
+```swift
+final class ThreadSafeCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Data] = [:]
+}
+```
+
+<div class="warning">
+<h4>@unchecked Sendable es una promesa</h4>
+
+El compilador no verificará la thread safety. Si te equivocas, tendrás data races. Úsalo con moderación.
+</div>
 
 <div class="tip">
-<h4>Empieza no-Sendable</h4>
+<h4>Approachable Concurrency: Menos Fricción</h4>
 
-[Matt Massicotte recomienda](https://www.massicotte.org/non-sendable/) empezar con tipos regulares, no-Sendable. Añade `Sendable` solo cuando necesites cruzar fronteras. Un tipo no-Sendable se mantiene simple y evita dolores de cabeza de conformance.
+Con [Approachable Concurrency](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html), los errores de Sendable se vuelven mucho más raros. Para habilitarlo, configura `SWIFT_VERSION` a `6` (o `5` con `-enable-upcoming-feature`) y `SWIFT_APPROACHABLE_CONCURRENCY` a `YES`. Los nuevos proyectos de Xcode 26 tienen ambos habilitados por defecto.
+
+- Si el código no cruza límites de aislamiento, no necesitas Sendable
+- Las funciones async permanecen en el actor del llamador en lugar de saltar a un hilo de fondo
+- El compilador es más inteligente detectando cuándo los valores se usan de forma segura
+
+Tu código se ejecuta en MainActor a menos que optes explícitamente por salir. Cuando necesites paralelismo, marca las funciones `@concurrent` y entonces piensa en Sendable.
+</div>
+
+<div class="analogy">
+<h4>Fotocopias vs. Documentos Originales</h4>
+
+Volviendo al edificio de oficinas. Cuando necesitas compartir información entre departamentos:
+
+- **Las fotocopias son seguras** - Si Legal hace una copia de un documento y lo envía a Contabilidad, ambos tienen su propia copia. Pueden escribir en ellos, modificarlos, lo que sea. Sin conflicto.
+- **Los contratos originales firmados deben quedarse donde están** - Si dos departamentos pudieran modificar el original, el caos se desata. ¿Quién tiene la versión real?
+
+Los tipos `Sendable` son como fotocopias: seguros de compartir porque cada lugar obtiene su propia copia independiente (tipos de valor) o porque son inmutables (nadie puede modificarlos). Los tipos no-`Sendable` son como contratos originales: pasarlos crea el potencial de modificaciones conflictivas.
 </div>
 
   </div>
 </section>
 
-<section id="async-await">
+<section id="isolation-inheritance">
   <div class="container">
 
-## Cómo Cruzar Fronteras
+## [Cómo Se Hereda el Aislamiento](#isolation-inheritance)
 
-Entiendes los dominios de aislamiento, sabes qué puede cruzarlos. Ahora: **¿cómo te comunicas realmente entre oficinas?**
+Has visto que los dominios de aislamiento protegen los datos, y Sendable controla qué cruza entre ellos. ¿Pero cómo termina el código en un dominio de aislamiento en primer lugar?
 
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
+Cuando llamas a una función o creas un closure, el aislamiento fluye a través de tu código. Con [Approachable Concurrency](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html), tu app comienza en [`MainActor`](https://developer.apple.com/documentation/swift/mainactor), y ese aislamiento se propaga al código que llamas, a menos que algo lo cambie explícitamente. Entender este flujo te ayuda a predecir dónde se ejecuta el código y por qué el compilador a veces se queja.
 
-No puedes simplemente irrumpir en otra oficina. Envías una solicitud y esperas una respuesta. Podrías trabajar en otras cosas mientras esperas, pero necesitas esa respuesta antes de poder continuar.
+### Llamadas a Funciones
 
-Eso es `async/await` - enviar una solicitud a otro dominio de aislamiento y pausar hasta obtener una respuesta.
-</div>
-
-### La Palabra Clave await
-
-Cuando llamas a una función en otro actor, necesitas `await`:
+Cuando llamas a una función, su aislamiento determina dónde se ejecuta:
 
 ```swift
-actor DataStore {
-    var items: [Item] = []
-
-    func add(_ item: Item) {
-        items.append(item)
-    }
-}
-
-@MainActor
-class ViewModel {
-    let store = DataStore()
-
-    func addItem(_ item: Item) async {
-        await store.add(item)  // Solicitud a otra oficina
-        updateUI()             // De vuelta en nuestra oficina
-    }
-}
+@MainActor func updateUI() { }      // Siempre se ejecuta en MainActor
+func helper() { }                    // Hereda el aislamiento del llamador
+@concurrent func crunch() async { }  // Explícitamente se ejecuta fuera del actor
 ```
 
-El `await` significa: "Envía esta solicitud y pausa hasta que termine. Podría hacer otro trabajo mientras espero."
+Con [Approachable Concurrency](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html), la mayor parte de tu código hereda el aislamiento de `MainActor`. La función se ejecuta donde se ejecuta el llamador, a menos que opte explícitamente por salir.
 
-### Suspensión, No Bloqueo
+### Closures
 
-<div class="warning">
-<h4>Concepto Erróneo Común</h4>
-
-Muchos desarrolladores asumen que añadir `async` hace que el código se ejecute en segundo plano. No es así. La palabra clave `async` solo significa que la función *puede pausar*. No dice nada sobre *dónde* se ejecuta.
-</div>
-
-La clave es la diferencia entre **bloqueo** y **suspensión**:
-
-- **Bloqueo**: Te sientas en la sala de espera mirando la pared. Nada más pasa.
-- **Suspensión**: Dejas tu número de teléfono y haces recados. Te llamarán cuando esté listo.
-
-<div class="code-tabs">
-<div class="code-tabs-nav">
-<button class="active">Bloqueo</button>
-<button>Suspensión</button>
-</div>
-<div class="code-tab-content active">
-
-```swift
-// El hilo está inactivo, sin hacer nada por 5 segundos
-Thread.sleep(forTimeInterval: 5)
-```
-
-</div>
-<div class="code-tab-content">
-
-```swift
-// El hilo está libre para hacer otro trabajo mientras espera
-try await Task.sleep(for: .seconds(5))
-```
-
-</div>
-</div>
-
-### Iniciar Trabajo Async desde Código Síncrono
-
-A veces estás en código síncrono y necesitas llamar algo async. Usa `Task`:
+Los closures heredan el aislamiento del contexto donde se definen:
 
 ```swift
 @MainActor
 class ViewModel {
-    func buttonTapped() {  // Función síncrona
+    func setup() {
+        let closure = {
+            // Hereda MainActor del ViewModel
+            self.updateUI()  // Seguro, mismo aislamiento
+        }
+        closure()
+    }
+}
+```
+
+Por eso los closures de acción de `Button` de SwiftUI pueden actualizar `@State` de forma segura: heredan el aislamiento de MainActor de la vista.
+
+### Tasks
+
+Un `Task { }` hereda el aislamiento del actor de donde se crea:
+
+```swift
+@MainActor
+class ViewModel {
+    func doWork() {
         Task {
-            await loadData()  // Ahora podemos usar await
+            // Hereda el aislamiento de MainActor
+            self.updateUI()  // Seguro, no se necesita await
         }
     }
 }
 ```
 
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
+Esto es usualmente lo que quieres. El task se ejecuta en el mismo actor que el código que lo creó.
 
-`Task` es como asignar trabajo a un empleado. El empleado maneja la solicitud (incluyendo esperar a otras oficinas) mientras tú continúas con tu trabajo inmediato.
-</div>
+### Rompiendo la Herencia: Task.detached
 
-  </div>
-</section>
-
-<section id="patterns">
-  <div class="container">
-
-## Patrones Que Funcionan
-
-### El Patrón de Petición de Red
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item main">MainActor</span>
-  <span class="isolation-legend-item nonisolated">Nonisolated (llamada de red)</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment main" style="flex-grow: 8"></div>
-  <div class="segment nonisolated" style="flex-grow: 2"></div>
-  <div class="segment main" style="flex-grow: 6"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 8"></div>
-  <div class="segment nonisolated-highlight" style="flex-grow: 2"></div>
-  <div class="segment" style="flex-grow: 6"></div>
-</div>
+A veces quieres un task que no herede ningún contexto:
 
 ```swift
 @MainActor
-@Observable
 class ViewModel {
-    var users: [User] = []
-    var isLoading = false
-
-    func fetchUsers() async {
-        isLoading = true
-
-        // Esto suspende - el hilo está libre para hacer otro trabajo
-        let users = await networkService.getUsers()
-
-        // De vuelta en MainActor automáticamente
-        self.users = users
-        isLoading = false
-    }
-}
-```
-
-</div>
-
-Sin `DispatchQueue.main.async`. El atributo `@MainActor` lo maneja.
-
-### Trabajo Paralelo con async let
-
-```swift
-func loadProfile() async -> Profile {
-    async let avatar = loadImage("avatar.jpg")
-    async let banner = loadImage("banner.jpg")
-    async let details = loadUserDetails()
-
-    // ¡Los tres se ejecutan en paralelo!
-    return Profile(
-        avatar: await avatar,
-        banner: await banner,
-        details: await details
-    )
-}
-```
-
-### Prevenir Doble-Taps
-
-Este patrón viene de la guía de Matt Massicotte sobre [sistemas con estado](https://www.massicotte.org/step-by-step-stateful-systems):
-
-```swift
-@MainActor
-class ButtonViewModel {
-    private var isLoading = false
-
-    func buttonTapped() {
-        // Guard SÍNCRONAMENTE antes de cualquier trabajo async
-        guard !isLoading else { return }
-        isLoading = true
-
-        Task {
-            await doExpensiveWork()
-            isLoading = false
+    func doHeavyWork() {
+        Task.detached {
+            // Sin aislamiento de actor, se ejecuta en el pool cooperativo
+            let result = await self.expensiveCalculation()
+            await MainActor.run {
+                self.data = result  // Saltar explícitamente de vuelta
+            }
         }
     }
 }
 ```
 
 <div class="warning">
-<h4>Crítico: El guard debe ser síncrono</h4>
+<h4>Task.detached usualmente está mal</h4>
 
-Si pones el guard dentro del Task después de un await, hay una ventana donde dos taps de botón pueden ambos iniciar trabajo. [Aprende más sobre ordenamiento y concurrencia](https://www.massicotte.org/ordering-and-concurrency).
+El equipo de Swift recomienda [Task.detached como último recurso](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929). No hereda prioridad, valores task-local, ni contexto de actor. La mayoría de las veces, un `Task` regular es lo que quieres. Si necesitas trabajo intensivo de CPU fuera del main actor, marca la función `@concurrent` en su lugar.
+</div>
+
+<div class="analogy">
+<h4>Caminando Por el Edificio</h4>
+
+Cuando estás en la oficina de recepción (MainActor), y llamas a alguien para que te ayude, vienen a *tu* oficina. Heredan tu ubicación. Si creas un task ("ve a hacer esto por mí"), ese asistente también empieza en tu oficina.
+
+La única forma en que alguien termina en una oficina diferente es si va explícitamente allí: "Necesito trabajar en Contabilidad para esto" (`actor`), o "Lo manejaré en la oficina de atrás" (`@concurrent`).
+</div>
+
+  </div>
+</section>
+
+<section id="putting-it-together">
+  <div class="container">
+
+## [Juntándolo Todo](#putting-it-together)
+
+Demos un paso atrás y veamos cómo encajan todas las piezas.
+
+Swift Concurrency puede parecer muchos conceptos: `async/await`, `Task`, actors, `MainActor`, `Sendable`, dominios de aislamiento. Pero realmente hay solo una idea en el centro de todo: **el aislamiento se hereda por defecto**.
+
+Con [Approachable Concurrency](https://www.swift.org/documentation/articles/swift-6.2-release-notes.html) habilitado, tu app comienza en [`MainActor`](https://developer.apple.com/documentation/swift/mainactor). Ese es tu punto de partida. Desde ahí:
+
+- Cada función que llamas **hereda** ese aislamiento
+- Cada closure que creas **captura** ese aislamiento
+- Cada [`Task { }`](https://developer.apple.com/documentation/swift/task) que generas **hereda** ese aislamiento
+
+No tienes que anotar nada. No tienes que pensar en hilos. Tu código se ejecuta en `MainActor`, y el aislamiento simplemente se propaga a través de tu programa automáticamente.
+
+Cuando necesitas salir de esa herencia, lo haces explícitamente:
+
+- **`@concurrent`** dice "ejecuta esto en un hilo de fondo"
+- **`actor`** dice "este tipo tiene su propio dominio de aislamiento"
+- **`Task.detached { }`** dice "empieza de cero, no heredes nada"
+
+Y cuando pasas datos entre dominios de aislamiento, Swift verifica que sea seguro. Para eso es [`Sendable`](https://developer.apple.com/documentation/swift/sendable): marcar tipos que pueden cruzar límites de forma segura.
+
+Eso es todo. Ese es todo el modelo:
+
+1. **El aislamiento se propaga** desde `MainActor` a través de tu código
+2. **Optas por salir explícitamente** cuando necesitas trabajo en segundo plano o estado separado
+3. **Sendable vigila los límites** cuando los datos cruzan entre dominios
+
+Cuando el compilador se queja, te está diciendo que una de estas reglas fue violada. Traza la herencia: ¿de dónde vino el aislamiento? ¿Dónde está tratando de ejecutarse el código? ¿Qué datos están cruzando un límite? La respuesta usualmente es obvia una vez que haces la pregunta correcta.
+
+### A Dónde Ir Desde Aquí
+
+La buena noticia: no necesitas dominar todo de una vez.
+
+**La mayoría de las apps solo necesitan lo básico.** Marca tus ViewModels con `@MainActor`, usa `async/await` para llamadas de red, y crea `Task { }` cuando necesites iniciar trabajo async desde un tap de botón. Eso es todo. Eso cubre el 80% de las apps del mundo real. El compilador te dirá si necesitas más.
+
+**Cuando necesites trabajo paralelo**, recurre a `async let` para obtener múltiples cosas a la vez, o [`TaskGroup`](https://developer.apple.com/documentation/swift/taskgroup) cuando el número de tasks es dinámico. Aprende a manejar la cancelación con gracia. Esto cubre apps con carga de datos compleja o funcionalidades en tiempo real.
+
+**Los patrones avanzados vienen después**, si acaso. Actors personalizados para estado mutable compartido, `@concurrent` para procesamiento intensivo de CPU, comprensión profunda de `Sendable`. Esto es código de framework, Swift del lado del servidor, apps de escritorio complejas. La mayoría de los desarrolladores nunca necesitan este nivel.
+
+<div class="tip">
+<h4>Empieza simple</h4>
+
+No optimices para problemas que no tienes. Empieza con lo básico, lanza tu app, y añade complejidad solo cuando encuentres problemas reales. El compilador te guiará.
 </div>
 
   </div>
@@ -516,247 +539,94 @@ Si pones el guard dentro del Task después de un await, hay una ventana donde do
 <section id="mistakes">
   <div class="container">
 
-## Errores Comunes a Evitar
-
-Estos son [errores comunes](https://www.massicotte.org/mistakes-with-concurrency/) que incluso desarrolladores experimentados cometen:
+## [Cuidado: Errores Comunes](#mistakes)
 
 ### Pensar que async = segundo plano
-
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-Añadir `async` no te mueve a una oficina diferente. Sigues en la recepción - solo que ahora puedes esperar entregas sin congelarte en el sitio.
-</div>
 
 ```swift
 // ¡Esto TODAVÍA bloquea el hilo principal!
 @MainActor
 func slowFunction() async {
-    let result = expensiveCalculation()  // Síncrono = bloqueante
+    let result = expensiveCalculation()  // Trabajo síncrono = bloqueante
     data = result
 }
 ```
 
-Si necesitas trabajo hecho en otra oficina, envíalo explícitamente allí:
-
-```swift
-func slowFunction() async {
-    let result = await Task.detached {
-        expensiveCalculation()  // Ahora en una oficina diferente
-    }.value
-    await MainActor.run { data = result }
-}
-```
+`async` significa "puede pausar". El trabajo real todavía se ejecuta donde se ejecuta. Usa `@concurrent` (Swift 6.2) o `Task.detached` para trabajo pesado de CPU.
 
 ### Crear demasiados actors
 
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-Crear una nueva oficina para cada pieza de datos significa papeleo interminable para comunicarse entre ellas. La mayoría de tu trabajo puede ocurrir en la recepción.
-</div>
-
 ```swift
-// Sobre-ingenierizado - cada llamada requiere caminar entre oficinas
+// Sobre-ingeniería
 actor NetworkManager { }
 actor CacheManager { }
 actor DataManager { }
 
-// Mejor - la mayoría de cosas pueden vivir en la recepción
+// Mejor - la mayoría de cosas pueden vivir en MainActor
 @MainActor
 class AppState { }
 ```
 
-### Usar MainActor.run en todas partes
-
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-Si sigues caminando a la recepción para cada cosa pequeña, simplemente trabaja allí. Hazlo parte de tu descripción de trabajo, no un recado constante.
-</div>
-
-```swift
-// No hagas esto - caminando constantemente a la recepción
-await MainActor.run { doMainActorStuff() }
-
-// Haz esto - simplemente trabaja en la recepción
-@MainActor func doMainActorStuff() { }
-```
+Solo necesitas un actor personalizado cuando tienes estado mutable compartido que no puede vivir en `MainActor`. [La regla de Matt Massicotte](https://www.massicotte.org/actors/): introduce un actor solo cuando (1) tienes estado no-`Sendable`, (2) las operaciones sobre ese estado deben ser atómicas, y (3) esas operaciones no pueden ejecutarse en un actor existente. Si no puedes justificarlo, usa `@MainActor` en su lugar.
 
 ### Hacer todo Sendable
 
-No todo necesita ser `Sendable`. Si estás añadiendo `@unchecked Sendable` en todas partes, estás haciendo fotocopias de cosas que no necesitan salir de la oficina.
+No todo necesita cruzar límites. Si estás añadiendo `@unchecked Sendable` en todas partes, da un paso atrás y pregunta si los datos realmente necesitan moverse entre dominios de aislamiento.
 
-### Ignorar warnings del compilador
-
-Cada warning del compilador sobre `Sendable` es el guardia de seguridad diciéndote que algo no es seguro de llevar entre oficinas. No los ignores - [entiéndelos](https://www.massicotte.org/complete-checking/).
-
-  </div>
-</section>
-
-<section id="errors">
-  <div class="container">
-
-## Errores Comunes del Compilador
-
-Estos son los mensajes de error reales que verás. Cada uno es el compilador protegiéndote de un data race.
-
-### "Sending 'self.foo' risks causing data races"
-
-<div class="compiler-error">
-Sending 'self.foo' risks causing data races
-</div>
-
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-Estás intentando llevar un documento original a otra oficina. O haz una fotocopia (Sendable) o mantenlo en un lugar.
-</div>
-
-**Solución 1:** Usa un `struct` en lugar de una `class`
-
-**Solución 2:** Mantenlo en un actor:
+### Usar MainActor.run cuando no lo necesitas
 
 ```swift
+// Innecesario
+Task {
+    let data = await fetchData()
+    await MainActor.run {
+        self.data = data
+    }
+}
+
+// Mejor - simplemente haz la función @MainActor
 @MainActor
-class MyClass {
-    var foo: SomeType  // Se queda en la recepción
+func loadData() async {
+    self.data = await fetchData()
 }
 ```
 
-### "Non-sendable type cannot cross actor boundary"
+`MainActor.run` raramente es la solución correcta. Si necesitas aislamiento de MainActor, anota la función con `@MainActor` en su lugar. Es más claro y el compilador puede ayudarte más. Mira [la opinión de Matt sobre esto](https://www.massicotte.org/problematic-patterns/).
 
-<div class="compiler-error">
-Non-sendable type 'MyClass' cannot cross actor boundary
-</div>
-
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-Estás intentando llevar un original entre oficinas. El guardia de seguridad te detuvo.
-</div>
-
-**Solución 1:** Hazlo una struct:
+### Bloquear el pool de hilos cooperativo
 
 ```swift
-// Antes: class (no-Sendable)
-class User { var name: String }
-
-// Después: struct (Sendable)
-struct User: Sendable { let name: String }
-```
-
-**Solución 2:** Aíslalo en un actor:
-
-```swift
-@MainActor
-class User { var name: String }
-```
-
-### "Actor-isolated property cannot be referenced"
-
-<div class="compiler-error">
-Actor-isolated property 'balance' cannot be referenced from the main actor
-</div>
-
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-Estás metiendo la mano en el archivador de otra oficina sin pasar por los canales apropiados.
-</div>
-
-**Solución:** Usa `await`:
-
-```swift
-// Mal - metiendo la mano directamente
-let value = myActor.balance
-
-// Bien - solicitud apropiada
-let value = await myActor.balance
-```
-
-### "Call to main actor-isolated method in synchronous context"
-
-<div class="compiler-error">
-Call to main actor-isolated instance method 'updateUI()' in a synchronous nonisolated context
-</div>
-
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-Estás intentando usar la recepción sin esperar en la fila.
-</div>
-
-**Solución 1:** Haz que el llamador sea `@MainActor`:
-
-```swift
-@MainActor
-func doSomething() {
-    updateUI()  // Mismo aislamiento, no se necesita await
+// NUNCA hagas esto - riesgo de deadlock
+func badIdea() async {
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        await doWork()
+        semaphore.signal()
+    }
+    semaphore.wait()  // ¡Bloquea un hilo cooperativo!
 }
 ```
 
-**Solución 2:** Usa `await`:
+El pool de hilos cooperativo de Swift tiene hilos limitados. Bloquear uno con `DispatchSemaphore`, `DispatchGroup.wait()`, o llamadas similares puede causar deadlocks. Si necesitas conectar código sync y async, usa `async let` o reestructura para quedarte completamente async.
+
+### Crear Tasks innecesarios
 
 ```swift
-func doSomething() async {
-    await updateUI()
+// Creación innecesaria de Task
+func fetchAll() async {
+    Task { await fetchUsers() }
+    Task { await fetchPosts() }
+}
+
+// Mejor - usa concurrencia estructurada
+func fetchAll() async {
+    async let users = fetchUsers()
+    async let posts = fetchPosts()
+    await (users, posts)
 }
 ```
 
-  </div>
-</section>
-
-<section>
-  <div class="container">
-
-## Tres Niveles de Swift Concurrency
-
-No necesitas aprender todo de una vez. Progresa a través de estos niveles:
-
-<div class="analogy">
-<h4>El Edificio de Oficinas</h4>
-
-Piénsalo como hacer crecer una empresa. No empiezas con una sede de 50 pisos - empiezas con un escritorio.
-</div>
-
-Estos niveles no son límites estrictos - diferentes partes de tu app podrían necesitar diferentes niveles. Una app mayormente-Nivel-1 podría tener una característica que necesita patrones de Nivel 2. Está bien. Usa el enfoque más simple que funcione para cada parte.
-
-### Nivel 1: La Startup
-
-Todos trabajan en la recepción. Simple, directo, sin burocracia.
-
-- Usa `async/await` para llamadas de red
-- Marca clases de UI con `@MainActor`
-- Usa el modificador `.task` de SwiftUI
-
-Esto cubre el 80% de las apps. Apps como [Things](https://culturedcode.com/things/), [Bear](https://bear.app/), [Flighty](https://flighty.com/), o [Day One](https://dayoneapp.com/) probablemente caen en esta categoría - apps que principalmente obtienen datos y los muestran.
-
-### Nivel 2: La Empresa en Crecimiento
-
-Necesitas manejar múltiples cosas a la vez. Es hora de proyectos paralelos y coordinar equipos.
-
-- Usa `async let` para trabajo paralelo
-- Usa `TaskGroup` para paralelismo dinámico
-- Entiende la cancelación de tasks
-
-Apps como [Ivory](https://tapbots.com/ivory/)/[Ice Cubes](https://github.com/Dimillian/IceCubesApp) (clientes de Mastodon manejando múltiples timelines y actualizaciones en streaming), [Overcast](https://overcast.fm/) (coordinando descargas, reproducción y sincronización en segundo plano), o [Slack](https://slack.com/) (mensajería en tiempo real a través de múltiples canales) podrían usar estos patrones para ciertas características.
-
-### Nivel 3: La Corporación
-
-Departamentos dedicados con sus propias políticas. Comunicación inter-oficina compleja.
-
-- Crea actors personalizados para estado compartido
-- Entendimiento profundo de Sendable
-- Executors personalizados
-
-Apps como [Xcode](https://developer.apple.com/xcode/), [Final Cut Pro](https://www.apple.com/final-cut-pro/), o frameworks Swift del lado del servidor como [Vapor](https://vapor.codes/) y [Hummingbird](https://hummingbird.codes/) probablemente necesitan estos patrones - estado compartido complejo, miles de conexiones concurrentes, o código a nivel de framework sobre el que otros construyen.
-
-<div class="tip">
-<h4>Empieza simple</h4>
-
-La mayoría de apps nunca necesitan Nivel 3. No construyas una corporación cuando una startup es suficiente.
-</div>
+Si ya estás en un contexto async, prefiere la concurrencia estructurada (`async let`, `TaskGroup`) sobre crear `Task`s no estructurados. La concurrencia estructurada maneja la cancelación automáticamente y hace el código más fácil de razonar.
 
   </div>
 </section>
@@ -764,304 +634,23 @@ La mayoría de apps nunca necesitan Nivel 3. No construyas una corporación cuan
 <section id="glossary">
   <div class="container">
 
-## Glosario: Más Palabras Clave Que Encontrarás
+## [Chuleta: Referencia Rápida](#glossary)
 
-Más allá de los conceptos básicos, aquí hay otras palabras clave de concurrencia de Swift que verás en el mundo real:
-
-| Palabra clave | Qué significa |
-|---------------|---------------|
-| `nonisolated` | Opta por salir del aislamiento de un actor - se ejecuta sin protección |
-| `isolated` | Declara explícitamente que un parámetro se ejecuta en el contexto de un actor |
-| `@Sendable` | Marca un closure como seguro para pasar a través de fronteras de aislamiento |
-| `Task.detached` | Crea un task completamente separado del contexto actual |
-| `AsyncSequence` | Una secuencia que puedes iterar con `for await` |
-| `AsyncStream` | Una forma de conectar código basado en callbacks con secuencias async |
-| `withCheckedContinuation` | Conecta completion handlers con async/await |
-| `Task.isCancelled` | Verifica si el task actual fue cancelado |
-| `@preconcurrency` | Suprime warnings de concurrencia para código legacy |
-| `GlobalActor` | Protocolo para crear tus propios actors personalizados como MainActor |
-
-### Cuándo Usar Cada Uno
-
-#### nonisolated - Leer propiedades computadas
-
-<div class="analogy">
-Como una placa con tu nombre en la puerta de tu oficina - cualquiera que pase puede leerla sin necesidad de entrar y esperarte.
-</div>
-
-Por defecto, todo dentro de un actor está aislado - necesitas `await` para accederlo. Pero a veces tienes propiedades que son inherentemente seguras de leer: constantes `let` inmutables, o propiedades computadas que solo derivan valores de otros datos seguros. Marcar estas como `nonisolated` permite a los llamadores accederlas síncronamente, evitando overhead async innecesario.
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item actor">Actor-isolated</span>
-  <span class="isolation-legend-item nonisolated">Nonisolated</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment actor" style="flex-grow: 4"></div>
-  <div class="segment nonisolated" style="flex-grow: 4"></div>
-  <div class="segment actor" style="flex-grow: 1"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 4"></div>
-  <div class="segment nonisolated-highlight" style="flex-grow: 4"></div>
-  <div class="segment" style="flex-grow: 1"></div>
-</div>
-
-```swift
-actor UserSession {
-    let userId: String  // Inmutable, seguro de leer
-    var lastActivity: Date  // Mutable, necesita protección
-
-    // Esto puede llamarse sin await
-    nonisolated var displayId: String {
-        "User: \(userId)"  // Solo lee datos inmutables
-    }
-}
-```
-
-</div>
-
-```swift
-// Uso
-let session = UserSession(userId: "123")
-print(session.displayId)  // ¡No se necesita await!
-```
-
-#### @Sendable - Closures que cruzan fronteras
-
-<div class="analogy">
-Como un sobre sellado con instrucciones dentro - el sobre puede viajar entre oficinas, y quien lo abra puede seguir las instrucciones de forma segura.
-</div>
-
-Cuando un closure escapa para ejecutarse más tarde o en un dominio de aislamiento diferente, Swift necesita garantizar que no causará data races. El atributo `@Sendable` marca closures que son seguros de pasar a través de fronteras - no pueden capturar estado mutable de forma insegura. Swift a menudo infiere esto automáticamente (como con `Task.detached`), pero a veces necesitas declararlo explícitamente al diseñar APIs que aceptan closures.
-
-```swift
-@MainActor
-class ViewModel {
-    var items: [Item] = []
-
-    func processInBackground() {
-        Task.detached {
-            // Este closure cruza desde el task detached al MainActor
-            // Debe ser @Sendable (Swift lo infiere)
-            let processed = await self.heavyProcessing()
-            await MainActor.run {
-                self.items = processed
-            }
-        }
-    }
-}
-
-// @Sendable explícito cuando se necesita
-func runLater(_ work: @Sendable @escaping () -> Void) {
-    DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
-        work()
-    }
-}
-```
-
-#### withCheckedContinuation - Conectando APIs antiguos
-
-<div class="analogy">
-Como un traductor entre el viejo sistema de memorándums de papel y el email moderno. Esperas en el correo hasta que el sistema viejo entrega una respuesta, luego la reenvías a través del nuevo sistema.
-</div>
-
-Muchas APIs antiguas usan completion handlers en lugar de async/await. En lugar de reescribirlas completamente, puedes envolverlas usando `withCheckedContinuation`. Esta función suspende el task actual, te da un objeto continuation, y reanuda cuando llamas a `continuation.resume()`. La variante "checked" detecta errores de programación como resumir dos veces o nunca resumir.
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item main">Contexto async</span>
-  <span class="isolation-legend-item nonisolated">Contexto callback</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment nonisolated" style="flex-grow: 5"></div>
-  <div class="segment main" style="flex-grow: 3"></div>
-  <div class="segment nonisolated" style="flex-grow: 3"></div>
-  <div class="segment main" style="flex-grow: 2"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 5"></div>
-  <div class="segment main-highlight" style="flex-grow: 3"></div>
-  <div class="segment nonisolated-highlight" style="flex-grow: 3"></div>
-  <div class="segment main-highlight" style="flex-grow: 2"></div>
-</div>
-
-```swift
-// API vieja basada en callbacks
-func fetchUser(id: String, completion: @escaping (User?) -> Void) {
-    // ... llamada de red con callback
-}
-
-// Envuelta como async
-func fetchUser(id: String) async -> User? {
-    await withCheckedContinuation { continuation in
-        fetchUser(id: id) { user in
-            continuation.resume(returning: user)  // ¡Conecta de vuelta!
-        }
-    }
-}
-```
-
-</div>
-
-Para funciones que lanzan, usa `withCheckedThrowingContinuation`:
-
-```swift
-func fetchUserThrowing(id: String) async throws -> User {
-    try await withCheckedThrowingContinuation { continuation in
-        fetchUser(id: id) { result in
-            switch result {
-            case .success(let user):
-                continuation.resume(returning: user)
-            case .failure(let error):
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-}
-```
-
-#### AsyncStream - Conectando fuentes de eventos
-
-<div class="analogy">
-Como configurar reenvío de correo - cada vez que llega una carta a la dirección antigua, automáticamente se redirige a tu nuevo buzón. El stream sigue fluyendo mientras siga llegando correo.
-</div>
-
-Mientras que `withCheckedContinuation` maneja callbacks de una sola vez, muchas APIs entregan múltiples valores a lo largo del tiempo - métodos de delegado, NotificationCenter, o sistemas de eventos personalizados. `AsyncStream` conecta estos con `AsyncSequence` de Swift, permitiéndote usar bucles `for await`. Creas un stream, guardas su continuation, y llamas a `yield()` cada vez que llega un nuevo valor.
-
-```swift
-class LocationTracker: NSObject, CLLocationManagerDelegate {
-    private var continuation: AsyncStream<CLLocation>.Continuation?
-
-    var locations: AsyncStream<CLLocation> {
-        AsyncStream { continuation in
-            self.continuation = continuation
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager,
-                        didUpdateLocations locations: [CLLocation]) {
-        for location in locations {
-            continuation?.yield(location)
-        }
-    }
-}
-
-// Uso
-let tracker = LocationTracker()
-for await location in tracker.locations {
-    print("Nueva ubicación: \(location)")
-}
-```
-
-#### Task.isCancelled - Cancelación cooperativa
-
-<div class="analogy">
-Como revisar tu bandeja de entrada por un memo de "deja de trabajar en esto" antes de empezar cada paso de un proyecto grande. No te obligan a parar - eliges revisar y responder educadamente.
-</div>
-
-Swift usa cancelación cooperativa - cuando un task se cancela, no se detiene inmediatamente. En su lugar, se establece una bandera, y es tu responsabilidad verificarla periódicamente. Esto te da control sobre la limpieza y resultados parciales. Usa `Task.checkCancellation()` para lanzar inmediatamente, o verifica `Task.isCancelled` cuando quieras manejar la cancelación de forma elegante (como retornando resultados parciales).
-
-```swift
-func processLargeDataset(_ items: [Item]) async throws -> [Result] {
-    var results: [Result] = []
-
-    for item in items {
-        // Verifica antes de cada operación costosa
-        try Task.checkCancellation()  // Lanza si está cancelado
-
-        // O verifica sin lanzar
-        if Task.isCancelled {
-            return results  // Retorna resultados parciales
-        }
-
-        let result = await process(item)
-        results.append(result)
-    }
-
-    return results
-}
-```
-
-#### Task.detached - Escapar del contexto actual
-
-<div class="analogy">
-Como contratar a un contratista externo que no reporta a tu departamento. Trabajan independientemente, no siguen las reglas de tu oficina, y tienes que coordinarte explícitamente cuando necesitas resultados de vuelta.
-</div>
-
-Un `Task { }` regular hereda el contexto actual del actor - si estás en `@MainActor`, el task se ejecuta en `@MainActor`. A veces eso no es lo que quieres, especialmente para trabajo intensivo de CPU que bloquearía la UI. `Task.detached` crea un task sin contexto heredado, ejecutándose en un executor de fondo. Úsalo con moderación - la mayoría del tiempo, `Task` regular con puntos `await` apropiados es suficiente y más fácil de razonar.
-
-<div class="isolation-legend">
-  <span class="isolation-legend-item main">MainActor</span>
-  <span class="isolation-legend-item detached">Detached</span>
-</div>
-<div class="code-isolation">
-<div class="isolation-sidebar">
-  <div class="segment main" style="flex-grow: 10"></div>
-  <div class="segment detached" style="flex-grow: 2"></div>
-  <div class="segment main" style="flex-grow: 1"></div>
-  <div class="segment detached" style="flex-grow: 1"></div>
-  <div class="segment main" style="flex-grow: 3"></div>
-</div>
-<div class="isolation-overlay">
-  <div class="segment" style="flex-grow: 10"></div>
-  <div class="segment detached-highlight" style="flex-grow: 2"></div>
-  <div class="segment" style="flex-grow: 1"></div>
-  <div class="segment detached-highlight" style="flex-grow: 1"></div>
-  <div class="segment" style="flex-grow: 3"></div>
-</div>
-
-```swift
-@MainActor
-class ImageProcessor {
-    func processImage(_ image: UIImage) {
-        // NO HAGAS: Esto todavía hereda el contexto de MainActor
-        Task {
-            let filtered = applyFilters(image)  // ¡Bloquea main!
-        }
-
-        // HAZ: Task detached se ejecuta independientemente
-        Task.detached(priority: .userInitiated) {
-            let filtered = await self.applyFilters(image)
-            await MainActor.run {
-                self.displayImage(filtered)
-            }
-        }
-    }
-}
-```
-
-</div>
-
-<div class="warning">
-<h4>Task.detached usualmente está mal</h4>
-
-La mayoría del tiempo, quieres un `Task` regular. Los tasks detached no heredan prioridad, valores task-local, o contexto de actor. Úsalos solo cuando explícitamente necesites esa separación.
-</div>
-
-#### @preconcurrency - Vivir con código legacy
-
-Silencia warnings al importar módulos que aún no están actualizados para concurrencia:
-
-```swift
-// Suprime warnings de este import
-@preconcurrency import OldFramework
-
-// O en una conformance de protocolo
-class MyDelegate: @preconcurrency SomeOldDelegate {
-    // No advertirá sobre requisitos no-Sendable
-}
-```
-
-<div class="tip">
-<h4>@preconcurrency es temporal</h4>
-
-Úsalo como puente mientras actualizas código. El objetivo es eventualmente eliminarlo y tener conformance Sendable apropiada.
-</div>
+| Palabra clave | Qué hace |
+|---------------|----------|
+| `async` | La función puede pausar |
+| `await` | Pausa aquí hasta que termine |
+| `Task { }` | Inicia trabajo async, hereda contexto |
+| `Task.detached { }` | Inicia trabajo async, sin contexto heredado |
+| `@MainActor` | Se ejecuta en el hilo principal |
+| `actor` | Tipo con estado mutable aislado |
+| `nonisolated` | Opta por salir del aislamiento del actor |
+| `Sendable` | Seguro para pasar entre dominios de aislamiento |
+| `@concurrent` | Siempre se ejecuta en segundo plano (Swift 6.2+) |
+| `async let` | Inicia trabajo paralelo |
+| `TaskGroup` | Trabajo paralelo dinámico |
 
 ## Lectura Adicional
-
-Esta guía destila los mejores recursos sobre concurrencia en Swift.
 
 <div class="resources">
 <h4>Blog de Matt Massicotte (Muy Recomendado)</h4>
@@ -1069,10 +658,7 @@ Esta guía destila los mejores recursos sobre concurrencia en Swift.
 - [A Swift Concurrency Glossary](https://www.massicotte.org/concurrency-glossary) - Terminología esencial
 - [An Introduction to Isolation](https://www.massicotte.org/intro-to-isolation/) - El concepto central
 - [When should you use an actor?](https://www.massicotte.org/actors/) - Guía práctica
-- [Non-Sendable types are cool too](https://www.massicotte.org/non-sendable/) - Por qué más simple es mejor
-- [Crossing the Boundary](https://www.massicotte.org/crossing-the-boundary/) - Trabajando con tipos no-Sendable
-- [Problematic Swift Concurrency Patterns](https://www.massicotte.org/problematic-patterns/) - Qué evitar
-- [Making Mistakes with Swift Concurrency](https://www.massicotte.org/mistakes-with-concurrency/) - Aprendiendo de errores
+- [Non-Sendable types are cool too](https://www.massicotte.org/non-sendable/) - Por qué lo simple es mejor
 </div>
 
 <div class="resources">
@@ -1081,14 +667,6 @@ Esta guía destila los mejores recursos sobre concurrencia en Swift.
 - [Swift Concurrency Documentation](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/)
 - [WWDC21: Meet async/await](https://developer.apple.com/videos/play/wwdc2021/10132/)
 - [WWDC21: Protect mutable state with actors](https://developer.apple.com/videos/play/wwdc2021/10133/)
-- [WWDC22: Eliminate data races](https://developer.apple.com/videos/play/wwdc2022/110351/)
-</div>
-
-<div class="resources">
-<h4>Tutoriales</h4>
-
-- [Swift Concurrency by Example - Hacking with Swift](https://www.hackingwithswift.com/quick-start/concurrency)
-- [Async await in Swift - SwiftLee](https://www.avanderlee.com/swift/async-await/)
 </div>
 
   </div>
