@@ -656,7 +656,13 @@ Eğer zaten asenkron bir bağlamdaysanız, yeni unstructured `Task`'lar oluştur
 | `async let` | Paralel iş başlatır. |
 | `TaskGroup` | Dinamik sayıda paralel işi yönetmek için kullanılır. |
 
-## Daha Fazlası İçin
+  </div>
+</section>
+
+<section id="further-reading">
+  <div class="container">
+
+## [Daha Fazlası İçin](#further-reading)
 
 <div class="resources">
 <h4>Matt Massicotte'un Blogu (Şiddetle Tavsiye Edilir)</h4>
