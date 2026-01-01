@@ -471,7 +471,7 @@ class ViewModel {
 The tasks you schedule with `Task { ... }` are not managed. There is no way for you to cancel them or to know when they finish, if ever. There is no way to access their return value or to know if they encounter an error. In the majority of the cases, it will be better to use tasks managed by a `.task` or `TaskGroup`, [as explained in the "Common mistakes" section](#managedtasks).
 
 [Task.detached should be your last resort](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929). Detached tasks don't inherit priority, task-local values, or actor context. If you need CPU-intensive work off the main actor, mark the function `@concurrent` instead.
- </div>
+</div>
 
 <div class="analogy">
 <h4>Walking Through the Building</h4>

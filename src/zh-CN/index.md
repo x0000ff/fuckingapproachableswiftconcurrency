@@ -468,9 +468,11 @@ class ViewModel {
 ```
 
 <div class="warning">
-<h4>Task.detached 通常是错的</h4>
+<h4>Task 和 Task.detached 是反模式</h4>
 
-Swift 团队推荐 [Task.detached 作为最后手段](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929)。它不继承优先级、task-local 值或 actor 上下文。大多数时候,普通的 `Task` 才是你想要的。如果你需要 CPU 密集型工作离开 main actor,把函数标记为 `@concurrent`。
+你用 `Task { ... }` 调度的任务是不受管理的。没有办法取消它们或知道它们何时完成,如果它们完成的话。没有办法访问它们的返回值或知道它们是否遇到了错误。在大多数情况下,使用由 `.task` 或 `TaskGroup` 管理的任务会更好,[如"常见错误"部分所述](#managedtasks)。
+
+[Task.detached 应该是你的最后手段](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929)。分离的任务不继承优先级、task-local 值或 actor 上下文。如果你需要 CPU 密集型工作离开 main actor,把函数标记为 `@concurrent`。
 </div>
 
 <div class="analogy">
@@ -609,24 +611,93 @@ func badIdea() async {
 
 Swift 的协作线程池线程数有限。用 `DispatchSemaphore`、`DispatchGroup.wait()` 或类似调用阻塞一个可能导致死锁。如果你需要桥接同步和异步代码,用 `async let` 或重构为完全异步。
 
-### 创建不必要的 Tasks
+<div id="managedtasks">
+
+### 创建不受管理的任务
+
+你用 `Task { ... }` 或 `Task.detached { ... }` 手动创建的任务是不受管理的。创建不受管理的任务后,你无法控制它们。如果启动它们的任务被取消,你无法取消它们。你无法知道它们是否完成了工作,是否抛出了错误,或收集它们的返回值。启动这样的任务就像把瓶子扔进大海,希望它能把信息传递到目的地,再也看不到那个瓶子了。
+
+<div class="analogy">
+<h4>办公楼</h4>
+
+`Task` 就像给员工分配工作。员工处理请求(包括等待其他办公室),而你继续你的即时工作。
+
+给员工派遣工作后,你没有办法与她沟通。你不能告诉她停止工作,也不知道她是否完成了以及那项工作的结果是什么。
+
+你真正想要的是给员工一个对讲机,这样在她处理请求时你可以与她沟通。有了对讲机,你可以告诉她停下来,或者她可以在遇到错误时告诉你,或者她可以报告你给她的请求的结果。
+</div>
+
+不要创建不受管理的任务,而是使用 Swift 并发来保持对你创建的子任务的控制。使用 `TaskGroup` 来管理(一组)子任务。Swift 提供了几个 `withTaskGroup() { group in ... }` 函数来帮助创建任务组。
 
 ```swift
-// 不必要的 Task 创建
-func fetchAll() async {
-    Task { await fetchUsers() }
-    Task { await fetchPosts() }
+func doWork() async {
+
+    // 这将在所有子任务返回、抛出错误或被取消时返回
+    let result = try await withThrowingTaskGroup() { group in
+        group.addTask {
+            try await self.performAsyncOperation1()
+        }
+        group.addTask {
+            try await self.performAsyncOperation2()
+        }
+        // 在这里等待并收集任务的结果
+    }
 }
 
-// 更好——使用结构化并发
-func fetchAll() async {
-    async let users = fetchUsers()
-    async let posts = fetchPosts()
-    await (users, posts)
+func performAsyncOperation1() async throws -> Int {
+    return 1
+}
+func performAsyncOperation2() async throws -> Int {
+    return 2
 }
 ```
 
-如果你已经在异步上下文中,优先使用结构化并发(`async let`、`TaskGroup`)而不是创建非结构化的 `Task`。结构化并发自动处理取消,让代码更容易理解。
+要收集组的子任务结果,可以使用 for-await-in 循环:
+
+```swift
+var sum = 0
+for await result in group {
+    sum += result
+}
+// sum == 3
+```
+
+你可以在 Swift 文档中了解更多关于 [TaskGroup](https://developer.apple.com/documentation/swift/taskgroup) 的信息。
+
+#### 关于 Tasks 和 SwiftUI 的说明
+
+编写 UI 时,你经常想从同步上下文启动异步任务。例如,你想在响应 UI 元素的点击时异步加载图像。在 Swift 中无法从同步上下文启动异步任务。这就是为什么你会看到涉及 `Task { ... }` 的解决方案,这引入了不受管理的任务。
+
+你不能从 SwiftUI 的同步修饰符使用 `TaskGroup`,因为 `withTaskGroup()` 也是一个 async 函数,它的相关函数也是如此。
+
+作为替代,SwiftUI 提供了一个异步修饰符,你可以用它来启动异步操作。我们已经提到的 `.task { }` 修饰符接受一个 `() async -> Void` 函数,非常适合调用其他 `async` 函数。它在每个 `View` 上都可用。它在视图出现之前触发,它创建的任务被管理并绑定到视图的生命周期,这意味着当视图消失时任务会被取消。
+
+回到点击加载图像的例子:不要创建一个不受管理的任务来从同步的 `.onTap() { ... }` 函数调用异步的 `loadImage()` 函数,你可以在点击手势时切换一个标志,并使用 `task(id:)` 修饰符在 `id`(标志)的值改变时异步加载图像。
+
+这是一个例子:
+
+```swift
+struct ContentView: View {
+
+    @State private var shouldLoadImage = false
+
+    var body: some View {
+        Button("点击这里!") {
+            // 切换标志
+            shouldLoadImage = !shouldLoadImage
+        }
+        // View 管理子任务
+        // 它在视图显示之前启动
+        // 并在视图隐藏时停止
+        .task(id: shouldLoadImage) {
+            // 当标志的值改变时,SwiftUI 重新启动任务
+            guard shouldLoadImage else { return }
+            await loadImage()
+        }
+    }
+}
+```
+</div>
 
   </div>
 </section>

@@ -468,9 +468,11 @@ class ViewModel {
 ```
 
 <div class="warning">
-<h4>Task.detached는 보통 잘못된 선택입니다</h4>
+<h4>Task와 Task.detached는 안티 패턴입니다</h4>
 
-Swift 팀은 [Task.detached를 최후의 수단으로 권장합니다](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929). 우선순위, task-local 값, 액터 컨텍스트를 상속하지 않습니다. 대부분의 경우 일반 `Task`가 원하는 것입니다. 메인 액터에서 벗어난 CPU 집약적 작업이 필요하면 함수를 `@concurrent`로 표시하세요.
+`Task { ... }`로 스케줄하는 태스크는 관리되지 않습니다. 취소하거나 언제 끝나는지 알 수 있는 방법이 없습니다. 반환 값에 접근하거나 오류가 발생했는지 알 수 있는 방법도 없습니다. 대부분의 경우 `.task`나 `TaskGroup`으로 관리되는 태스크를 사용하는 것이 더 좋습니다. ["흔한 실수" 섹션에서 설명한 대로](#managedtasks).
+
+[Task.detached는 최후의 수단이어야 합니다](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929). 분리된 태스크는 우선순위, task-local 값, 액터 컨텍스트를 상속하지 않습니다. 메인 액터에서 벗어난 CPU 집약적 작업이 필요하면 함수를 `@concurrent`로 표시하세요.
 </div>
 
 <div class="analogy">
@@ -609,24 +611,93 @@ func badIdea() async {
 
 Swift의 협력적 스레드 풀은 제한된 스레드를 가집니다. `DispatchSemaphore`, `DispatchGroup.wait()`, 또는 비슷한 호출로 하나를 차단하면 데드락이 발생할 수 있습니다. 동기와 비동기 코드를 연결해야 한다면, `async let`을 사용하거나 완전히 비동기로 유지하도록 재구성하세요.
 
-### 불필요한 Tasks 생성하기
+<div id="managedtasks">
+
+### 관리되지 않는 태스크 생성하기
+
+`Task { ... }` 또는 `Task.detached { ... }`로 수동으로 생성하는 태스크는 관리되지 않습니다. 관리되지 않는 태스크를 생성한 후에는 제어할 수 없습니다. 시작한 태스크가 취소되어도 취소할 수 없습니다. 작업이 완료되었는지, 오류를 던졌는지, 반환 값을 수집할 수 없습니다. 이런 태스크를 시작하는 것은 바다에 병을 던지고 메시지가 목적지에 도달하기를 바라는 것과 같습니다. 그 병을 다시 볼 수 없습니다.
+
+<div class="analogy">
+<h4>사무실 건물</h4>
+
+`Task`는 직원에게 일을 할당하는 것과 같습니다. 직원은 요청을 처리하고(다른 사무실을 기다리는 것 포함) 여러분은 당장의 일을 계속합니다.
+
+직원에게 일을 보낸 후, 그녀와 소통할 수단이 없습니다. 일을 멈추라고 말하거나 끝났는지, 그 일의 결과가 무엇인지 알 수 없습니다.
+
+정말 원하는 것은 직원에게 무전기를 주어 요청을 처리하는 동안 소통할 수 있게 하는 것입니다. 무전기가 있으면 멈추라고 말할 수 있고, 오류가 발생하면 알려줄 수 있고, 맡긴 요청의 결과를 보고할 수 있습니다.
+</div>
+
+관리되지 않는 태스크를 생성하는 대신, Swift 동시성을 사용하여 생성하는 서브태스크의 제어를 유지하세요. `TaskGroup`을 사용하여 (그룹의) 서브태스크를 관리하세요. Swift는 `withTaskGroup() { group in ... }` 함수들을 제공합니다.
 
 ```swift
-// 불필요한 Task 생성
-func fetchAll() async {
-    Task { await fetchUsers() }
-    Task { await fetchPosts() }
+func doWork() async {
+
+    // 모든 서브태스크가 반환하거나, 오류를 던지거나, 취소될 때 반환됩니다
+    let result = try await withThrowingTaskGroup() { group in
+        group.addTask {
+            try await self.performAsyncOperation1()
+        }
+        group.addTask {
+            try await self.performAsyncOperation2()
+        }
+        // 여기서 태스크 결과를 기다리고 수집합니다
+    }
 }
 
-// 더 나음 - 구조화된 동시성 사용
-func fetchAll() async {
-    async let users = fetchUsers()
-    async let posts = fetchPosts()
-    await (users, posts)
+func performAsyncOperation1() async throws -> Int {
+    return 1
+}
+func performAsyncOperation2() async throws -> Int {
+    return 2
 }
 ```
 
-이미 비동기 컨텍스트에 있다면, 비구조화된 `Task`를 생성하는 것보다 구조화된 동시성(`async let`, `TaskGroup`)을 선호하세요. 구조화된 동시성은 취소를 자동으로 처리하고 코드를 이해하기 쉽게 만듭니다.
+그룹의 자식 태스크 결과를 수집하려면 for-await-in 루프를 사용할 수 있습니다:
+
+```swift
+var sum = 0
+for await result in group {
+    sum += result
+}
+// sum == 3
+```
+
+[TaskGroup](https://developer.apple.com/documentation/swift/taskgroup)에 대해 더 자세히는 Swift 문서를 참조하세요.
+
+#### 태스크와 SwiftUI에 대한 참고
+
+UI를 작성할 때 동기 컨텍스트에서 비동기 태스크를 시작하고 싶을 때가 많습니다. 예를 들어 UI 요소 터치에 응답하여 비동기적으로 이미지를 로드하고 싶습니다. Swift에서는 동기 컨텍스트에서 비동기 태스크를 시작할 수 없습니다. 그래서 `Task { ... }`를 포함하는 솔루션을 보게 되는데, 이는 관리되지 않는 태스크를 도입합니다.
+
+SwiftUI의 동기 수정자에서 `TaskGroup`을 사용할 수 없습니다. `withTaskGroup()`도 async 함수이고 관련 함수들도 마찬가지입니다.
+
+대안으로 SwiftUI는 비동기 작업을 시작하는 데 사용할 수 있는 비동기 수정자를 제공합니다. 이미 언급한 `.task { }` 수정자는 `() async -> Void` 함수를 받아 다른 `async` 함수를 호출하는 데 이상적입니다. 모든 `View`에서 사용 가능합니다. 뷰가 나타나기 전에 트리거되고 생성하는 태스크는 뷰의 라이프사이클에 관리되고 바인딩되어 뷰가 사라지면 태스크가 취소됩니다.
+
+탭하여 이미지 로드 예제로 돌아가서: 동기 `.onTap() { ... }` 함수에서 비동기 `loadImage()` 함수를 호출하기 위해 관리되지 않는 태스크를 생성하는 대신, 탭 제스처에서 플래그를 토글하고 `task(id:)` 수정자를 사용하여 `id`(플래그) 값이 변경될 때 비동기적으로 이미지를 로드할 수 있습니다.
+
+예제입니다:
+
+```swift
+struct ContentView: View {
+
+    @State private var shouldLoadImage = false
+
+    var body: some View {
+        Button("클릭하세요!") {
+            // 플래그 토글
+            shouldLoadImage = !shouldLoadImage
+        }
+        // View가 서브태스크를 관리합니다
+        // 뷰가 표시되기 전에 시작
+        // 뷰가 숨겨지면 중지
+        .task(id: shouldLoadImage) {
+            // 플래그 값이 변경되면 SwiftUI가 태스크를 다시 시작합니다
+            guard shouldLoadImage else { return }
+            await loadImage()
+        }
+    }
+}
+```
+</div>
 
   </div>
 </section>

@@ -468,9 +468,11 @@ class ViewModel {
 ```
 
 <div class="warning">
-<h4>Task.detached は通常間違い</h4>
+<h4>Task と Task.detached はアンチパターン</h4>
 
-Swift チームは [Task.detached を最後の手段として](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929)推奨している。優先度、タスクローカル値、アクターコンテキストを継承しない。ほとんどの場合、通常の `Task` が必要だ。メインアクターから外れた CPU 集約的な作業が必要なら、代わりに関数を `@concurrent` でマークしよう。
+`Task { ... }` でスケジュールするタスクは管理されない。キャンセルする方法も、いつ終わるか知る方法もない。戻り値にアクセスする方法も、エラーに遭遇したか知る方法もない。ほとんどの場合、`.task` や `TaskGroup` で管理されるタスクを使う方が良い。[「よくある間違い」セクションで説明されている通り](#managedtasks)。
+
+[Task.detached は最後の手段であるべき](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929)。デタッチされたタスクは優先度、タスクローカル値、アクターコンテキストを継承しない。メインアクターから外れた CPU 集約的な作業が必要なら、代わりに関数を `@concurrent` でマークしよう。
 </div>
 
 <div class="analogy">
@@ -609,24 +611,93 @@ func badIdea() async {
 
 Swift の協調スレッドプールは限られたスレッドを持つ。`DispatchSemaphore`、`DispatchGroup.wait()` などでブロックするとデッドロックを引き起こす可能性がある。同期と非同期のコードをブリッジする必要があるなら、`async let` を使うか、完全に非同期のままになるように再構成しよう。
 
-### 不要な Task を作る
+<div id="managedtasks">
+
+### 管理されないタスクを作る
+
+`Task { ... }` や `Task.detached { ... }` で手動で作成するタスクは管理されない。管理されないタスクを作成した後、それらを制御することはできない。開始したタスクがキャンセルされてもキャンセルできない。作業が完了したか、エラーをスローしたか、戻り値を収集することもできない。このようなタスクを開始することは、ボトルを海に投げてメッセージが届くことを願うようなもので、そのボトルを二度と見ることはない。
+
+<div class="analogy">
+<h4>オフィスビル</h4>
+
+`Task` は従業員に仕事を割り当てるようなものだ。従業員はリクエストを処理し（他のオフィスを待つことを含む）、あなたは目の前の仕事を続ける。
+
+従業員に仕事を送った後、彼女と通信する手段はない。仕事を止めるよう伝えることも、完了したかどうか、その仕事の結果が何だったかを知ることもできない。
+
+本当に欲しいのは、従業員にトランシーバーを渡して、リクエストを処理している間も通信できるようにすることだ。トランシーバーがあれば、止まるよう伝えることができ、彼女はエラーに遭遇したときに伝えることができ、あなたが与えたリクエストの結果を報告することができる。
+</div>
+
+管理されないタスクを作成する代わりに、Swift の並行処理を使って作成するサブタスクの制御を維持しよう。`TaskGroup` を使って（グループの）サブタスクを管理しよう。Swift は `withTaskGroup() { group in ... }` 関数をいくつか提供している。
 
 ```swift
-// 不要な Task 作成
-func fetchAll() async {
-    Task { await fetchUsers() }
-    Task { await fetchPosts() }
+func doWork() async {
+
+    // すべてのサブタスクが戻る、エラーをスローする、またはキャンセルされたときにこれは戻る
+    let result = try await withThrowingTaskGroup() { group in
+        group.addTask {
+            try await self.performAsyncOperation1()
+        }
+        group.addTask {
+            try await self.performAsyncOperation2()
+        }
+        // ここでタスクの結果を待って収集する
+    }
 }
 
-// より良い - 構造化並行処理を使う
-func fetchAll() async {
-    async let users = fetchUsers()
-    async let posts = fetchPosts()
-    await (users, posts)
+func performAsyncOperation1() async throws -> Int {
+    return 1
+}
+func performAsyncOperation2() async throws -> Int {
+    return 2
 }
 ```
 
-すでに async コンテキストにいるなら、非構造化 `Task` を作るより構造化並行処理（`async let`、`TaskGroup`）を優先しよう。構造化並行処理はキャンセルを自動的に処理し、コードを推論しやすくする。
+グループの子タスクの結果を収集するには、for-await-in ループを使える:
+
+```swift
+var sum = 0
+for await result in group {
+    sum += result
+}
+// sum == 3
+```
+
+[TaskGroup](https://developer.apple.com/documentation/swift/taskgroup) について詳しくは Swift ドキュメントを参照。
+
+#### タスクと SwiftUI についての注意
+
+UI を書くとき、同期コンテキストから非同期タスクを開始したいことがよくある。例えば、UI 要素のタッチに応答して非同期で画像を読み込みたい。Swift では同期コンテキストから非同期タスクを開始することはできない。だから `Task { ... }` を含むソリューションを見かけるが、これは管理されないタスクを導入する。
+
+SwiftUI の同期修飾子から `TaskGroup` を使うことはできない。`withTaskGroup()` も async 関数であり、関連する関数も同様だ。
+
+代わりに、SwiftUI は非同期操作を開始するために使える非同期修飾子を提供している。すでに言及した `.task { }` 修飾子は `() async -> Void` 関数を受け取り、他の `async` 関数を呼び出すのに理想的だ。すべての `View` で利用可能。ビューが表示される前にトリガーされ、作成されるタスクはビューのライフサイクルに管理・バインドされ、ビューが消えるとタスクがキャンセルされる。
+
+タップで画像を読み込む例に戻る: 同期の `.onTap() { ... }` 関数から非同期の `loadImage()` 関数を呼び出すために管理されないタスクを作成する代わりに、タップジェスチャーでフラグをトグルし、`task(id:)` 修飾子を使って `id`（フラグ）の値が変わったときに非同期で画像を読み込むことができる。
+
+例を示す:
+
+```swift
+struct ContentView: View {
+
+    @State private var shouldLoadImage = false
+
+    var body: some View {
+        Button("クリック！") {
+            // フラグをトグル
+            shouldLoadImage = !shouldLoadImage
+        }
+        // View がサブタスクを管理する
+        // ビューが表示される前に開始
+        // ビューが非表示になると停止
+        .task(id: shouldLoadImage) {
+            // フラグの値が変わると、SwiftUI はタスクを再開する
+            guard shouldLoadImage else { return }
+            await loadImage()
+        }
+    }
+}
+```
+</div>
 
   </div>
 </section>
