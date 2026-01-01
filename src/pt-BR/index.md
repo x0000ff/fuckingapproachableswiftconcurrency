@@ -468,9 +468,11 @@ class ViewModel {
 ```
 
 <div class="warning">
-<h4>Task.detached geralmente está errado</h4>
+<h4>Task e Task.detached são antipadrões</h4>
 
-O time do Swift recomenda [Task.detached como último recurso](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929). Ele não herda prioridade, valores task-local, ou contexto de actor. Na maioria das vezes, `Task` regular é o que você quer. Se você precisa de trabalho intensivo de CPU fora do main actor, marque a função como `@concurrent` em vez disso.
+As tasks que você agenda com `Task { ... }` não são gerenciadas. Não há como cancelá-las ou saber quando terminam, se é que terminam. Não há como acessar seu valor de retorno ou saber se encontraram um erro. Na maioria dos casos, é melhor usar tasks gerenciadas por `.task` ou `TaskGroup`, [como explicado na seção "Erros Comuns"](#managedtasks).
+
+[Task.detached deve ser seu último recurso](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929). Tasks detached não herdam prioridade, valores task-local, ou contexto de actor. Se você precisa de trabalho intensivo de CPU fora do main actor, marque a função como `@concurrent` em vez disso.
 </div>
 
 <div class="analogy">
@@ -609,24 +611,93 @@ func badIdea() async {
 
 O thread pool cooperativo do Swift tem threads limitadas. Bloquear uma com `DispatchSemaphore`, `DispatchGroup.wait()`, ou chamadas similares pode causar deadlocks. Se você precisa fazer ponte entre código sync e async, use `async let` ou reestruture para ficar totalmente async.
 
-### Criar Tasks desnecessárias
+<div id="managedtasks">
+
+### Criar tasks não gerenciadas
+
+Tasks que você cria manualmente com `Task { ... }` ou `Task.detached { ... }` não são gerenciadas. Depois de criar tasks não gerenciadas, você não pode controlá-las. Você não pode cancelá-las se a task da qual você as iniciou for cancelada. Você não pode saber se elas terminaram seu trabalho, se lançaram um erro, ou coletar seu valor de retorno. Iniciar tal task é como jogar uma garrafa no mar esperando que ela entregue sua mensagem ao destino, sem nunca ver essa garrafa de novo.
+
+<div class="analogy">
+<h4>O Prédio de Escritórios</h4>
+
+Uma `Task` é como atribuir trabalho a um funcionário. O funcionário lida com a solicitação (incluindo esperar por outros escritórios) enquanto você continua com seu trabalho imediato.
+
+Depois de despachar trabalho para o funcionário, você não tem meios de se comunicar com ela. Você não pode dizer para ela parar o trabalho ou saber se ela terminou e qual foi o resultado desse trabalho.
+
+O que você realmente quer é dar ao funcionário um walkie-talkie para se comunicar com ela enquanto ela lida com a solicitação. Com o walkie-talkie, você pode dizer para ela parar, ou ela pode te dizer quando encontrar um erro, ou pode reportar o resultado da solicitação que você deu a ela.
+</div>
+
+Em vez de criar tasks não gerenciadas, use concorrência Swift para manter o controle das subtasks que você cria. Use `TaskGroup` para gerenciar (um grupo de) subtask(s). Swift fornece algumas funções `withTaskGroup() { group in ... }` para ajudar a criar grupos de tasks.
 
 ```swift
-// Criação desnecessária de Task
-func fetchAll() async {
-    Task { await fetchUsers() }
-    Task { await fetchPosts() }
+func doWork() async {
+
+    // isso retornará quando todas as subtasks retornarem, lançarem um erro, ou forem canceladas
+    let result = try await withThrowingTaskGroup() { group in
+        group.addTask {
+            try await self.performAsyncOperation1()
+        }
+        group.addTask {
+            try await self.performAsyncOperation2()
+        }
+        // espere e colete os resultados das tasks aqui
+    }
 }
 
-// Melhor - use concorrência estruturada
-func fetchAll() async {
-    async let users = fetchUsers()
-    async let posts = fetchPosts()
-    await (users, posts)
+func performAsyncOperation1() async throws -> Int {
+    return 1
+}
+func performAsyncOperation2() async throws -> Int {
+    return 2
 }
 ```
 
-Se você já está em um contexto async, prefira concorrência estruturada (`async let`, `TaskGroup`) em vez de criar `Task`s não estruturadas. Concorrência estruturada lida com cancelamento automaticamente e torna o código mais fácil de entender.
+Para coletar os resultados das tasks filhas do grupo, você pode usar um loop for-await-in:
+
+```swift
+var sum = 0
+for await result in group {
+    sum += result
+}
+// sum == 3
+```
+
+Você pode aprender mais sobre [TaskGroup](https://developer.apple.com/documentation/swift/taskgroup) na documentação do Swift.
+
+#### Nota sobre Tasks e SwiftUI.
+
+Ao escrever uma UI, você frequentemente quer iniciar tasks assíncronas de um contexto síncrono. Por exemplo, você quer carregar uma imagem assincronamente como resposta a um toque em um elemento de UI. Iniciar tasks assíncronas de um contexto síncrono não é possível em Swift. Por isso você vê soluções envolvendo `Task { ... }`, que introduz tasks não gerenciadas.
+
+Você não pode usar `TaskGroup` de um modifier síncrono do SwiftUI porque `withTaskGroup()` é uma função async também e suas funções relacionadas também são.
+
+Como alternativa, SwiftUI oferece um modifier assíncrono que você pode usar para iniciar operações assíncronas. O modifier `.task { }`, que já mencionamos, aceita uma função `() async -> Void`, ideal para chamar outras funções `async`. Está disponível em toda `View`. É acionado antes da view aparecer e as tasks que ele cria são gerenciadas e vinculadas ao ciclo de vida da view, significando que as tasks são canceladas quando a view desaparece.
+
+Voltando ao exemplo de tocar-para-carregar-uma-imagem: em vez de criar uma task não gerenciada para chamar uma função assíncrona `loadImage()` de uma função síncrona `.onTap() { ... }`, você pode alternar uma flag no gesto de tap e usar o modifier `task(id:)` para carregar imagens assincronamente quando o valor do `id` (a flag) mudar.
+
+Aqui está um exemplo:
+
+```swift
+struct ContentView: View {
+
+    @State private var shouldLoadImage = false
+
+    var body: some View {
+        Button("Clique Aqui!") {
+            // alterna a flag
+            shouldLoadImage = !shouldLoadImage
+        }
+        // a View gerencia a subtask
+        // ela inicia antes da view ser exibida
+        // e para quando a view é ocultada
+        .task(id: shouldLoadImage) {
+            // quando o valor da flag muda, SwiftUI reinicia a task
+            guard shouldLoadImage else { return }
+            await loadImage()
+        }
+    }
+}
+```
+</div>
 
   </div>
 </section>

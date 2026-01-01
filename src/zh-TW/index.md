@@ -468,9 +468,11 @@ class ViewModel {
 ```
 
 <div class="warning">
-<h4>Task.detached 通常是錯的</h4>
+<h4>Task 和 Task.detached 是反模式</h4>
 
-Swift 團隊建議 [Task.detached 作為最後手段](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929)。它不繼承優先級、task-local 值或 actor 上下文。大多數時候，普通的 `Task` 才是你想要的。如果你需要在主 actor 外進行 CPU 密集型工作，改為把函式標記為 `@concurrent`。
+你用 `Task { ... }` 排程的任務是不受管理的。沒有辦法取消它們或知道它們何時完成，如果它們完成的話。沒有辦法存取它們的回傳值或知道它們是否遇到了錯誤。在大多數情況下，使用由 `.task` 或 `TaskGroup` 管理的任務會更好，[如「常見錯誤」部分所述](#managedtasks)。
+
+[Task.detached 應該是你的最後手段](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929)。分離的任務不繼承優先級、task-local 值或 actor 上下文。如果你需要在主 actor 外進行 CPU 密集型工作，改為把函式標記為 `@concurrent`。
 </div>
 
 <div class="analogy">
@@ -609,24 +611,93 @@ func badIdea() async {
 
 Swift 的合作執行緒池有有限的執行緒。用 `DispatchSemaphore`、`DispatchGroup.wait()` 或類似的呼叫阻塞一個可能造成死鎖。如果你需要橋接同步和非同步程式碼，用 `async let` 或重構以保持完全非同步。
 
-### 建立不必要的 Tasks
+<div id="managedtasks">
+
+### 建立不受管理的任務
+
+你用 `Task { ... }` 或 `Task.detached { ... }` 手動建立的任務是不受管理的。建立不受管理的任務後，你無法控制它們。如果啟動它們的任務被取消，你無法取消它們。你無法知道它們是否完成了工作，是否拋出了錯誤，或收集它們的回傳值。啟動這樣的任務就像把瓶子丟進大海，希望它能把訊息傳遞到目的地，再也看不到那個瓶子了。
+
+<div class="analogy">
+<h4>辦公大樓</h4>
+
+`Task` 就像給員工分配工作。員工處理請求（包括等待其他辦公室），而你繼續你的即時工作。
+
+給員工派遣工作後，你沒有辦法與她溝通。你不能告訴她停止工作，也不知道她是否完成了以及那項工作的結果是什麼。
+
+你真正想要的是給員工一個對講機，這樣在她處理請求時你可以與她溝通。有了對講機，你可以告訴她停下來，或者她可以在遇到錯誤時告訴你，或者她可以報告你給她的請求的結果。
+</div>
+
+不要建立不受管理的任務，而是使用 Swift 並發來保持對你建立的子任務的控制。使用 `TaskGroup` 來管理（一組）子任務。Swift 提供了幾個 `withTaskGroup() { group in ... }` 函式來幫助建立任務群組。
 
 ```swift
-// 不必要的 Task 建立
-func fetchAll() async {
-    Task { await fetchUsers() }
-    Task { await fetchPosts() }
+func doWork() async {
+
+    // 這將在所有子任務回傳、拋出錯誤或被取消時回傳
+    let result = try await withThrowingTaskGroup() { group in
+        group.addTask {
+            try await self.performAsyncOperation1()
+        }
+        group.addTask {
+            try await self.performAsyncOperation2()
+        }
+        // 在這裡等待並收集任務的結果
+    }
 }
 
-// 更好——用結構化並發
-func fetchAll() async {
-    async let users = fetchUsers()
-    async let posts = fetchPosts()
-    await (users, posts)
+func performAsyncOperation1() async throws -> Int {
+    return 1
+}
+func performAsyncOperation2() async throws -> Int {
+    return 2
 }
 ```
 
-如果你已經在非同步上下文中，優先使用結構化並發（`async let`、`TaskGroup`）而不是建立非結構化的 `Task`。結構化並發自動處理取消，讓程式碼更容易理解。
+要收集群組的子任務結果，可以使用 for-await-in 迴圈：
+
+```swift
+var sum = 0
+for await result in group {
+    sum += result
+}
+// sum == 3
+```
+
+你可以在 Swift 文件中了解更多關於 [TaskGroup](https://developer.apple.com/documentation/swift/taskgroup) 的資訊。
+
+#### 關於 Tasks 和 SwiftUI 的說明
+
+撰寫 UI 時，你經常想從同步上下文啟動非同步任務。例如，你想在回應 UI 元素的點擊時非同步載入圖片。在 Swift 中無法從同步上下文啟動非同步任務。這就是為什麼你會看到涉及 `Task { ... }` 的解決方案，這引入了不受管理的任務。
+
+你不能從 SwiftUI 的同步修飾器使用 `TaskGroup`，因為 `withTaskGroup()` 也是一個 async 函式，它的相關函式也是如此。
+
+作為替代，SwiftUI 提供了一個非同步修飾器，你可以用它來啟動非同步操作。我們已經提到的 `.task { }` 修飾器接受一個 `() async -> Void` 函式，非常適合呼叫其他 `async` 函式。它在每個 `View` 上都可用。它在視圖出現之前觸發，它建立的任務被管理並繫結到視圖的生命週期，這意味著當視圖消失時任務會被取消。
+
+回到點擊載入圖片的例子：不要建立一個不受管理的任務來從同步的 `.onTap() { ... }` 函式呼叫非同步的 `loadImage()` 函式，你可以在點擊手勢時切換一個旗標，並使用 `task(id:)` 修飾器在 `id`（旗標）的值改變時非同步載入圖片。
+
+這是一個例子：
+
+```swift
+struct ContentView: View {
+
+    @State private var shouldLoadImage = false
+
+    var body: some View {
+        Button("點擊這裡！") {
+            // 切換旗標
+            shouldLoadImage = !shouldLoadImage
+        }
+        // View 管理子任務
+        // 它在視圖顯示之前啟動
+        // 並在視圖隱藏時停止
+        .task(id: shouldLoadImage) {
+            // 當旗標的值改變時，SwiftUI 重新啟動任務
+            guard shouldLoadImage else { return }
+            await loadImage()
+        }
+    }
+}
+```
+</div>
 
   </div>
 </section>

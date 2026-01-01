@@ -466,9 +466,11 @@ class ViewModel {
 ```
 
 <div class="warning">
-<h4>Task.detached is usually wrong</h4>
+<h4>Task and Task.detached are an anti-pattern</h4>
 
-The Swift team recommends [Task.detached as a last resort](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929). It doesn't inherit priority, task-local values, or actor context. Most of the time, regular `Task` is what you want. If you need CPU-intensive work off the main actor, mark the function `@concurrent` instead.
+The tasks you schedule with `Task { ... }` are not managed. There is no way for you to cancel them or to know when they finish, if ever. There is no way to access their return value or to know if they encounter an error. In the majority of the cases, it will be better to use tasks managed by a `.task` or `TaskGroup`, [as explained in the "Common mistakes" section](#managedtasks).
+
+[Task.detached should be your last resort](https://forums.swift.org/t/revisiting-when-to-use-task-detached/57929). Detached tasks don't inherit priority, task-local values, or actor context. If you need CPU-intensive work off the main actor, mark the function `@concurrent` instead.
 </div>
 
 <div class="analogy">
@@ -607,24 +609,93 @@ func badIdea() async {
 
 Swift's cooperative thread pool has limited threads. Blocking one with `DispatchSemaphore`, `DispatchGroup.wait()`, or similar calls can cause deadlocks. If you need to bridge sync and async code, use `async let` or restructure to stay fully async.
 
-### Creating unnecessary Tasks
+<div id="managedtasks">
+
+### Create unmanaged tasks
+
+Tasks that you create manually with `Task { ... }` or `Task.detached { ... }` are not managed. After you create unmanaged tasks, you can't control them. You can't cancel them if the task from which you started it is cancelled. You can't know if they finished their work, if they threw an error, or collect their return value. Starting such a task is like throwing a bottle into the sea and hoping it will deliver its message to its destination, without ever seeing that bottle again.
+
+<div class="analogy">
+<h4>The Office Building</h4>
+
+A `Task` is like assigning work to an employee. The employee handles the request (including waiting for other offices) while you continue with your immediate work.
+
+After you dispatch work to the employee, you have no means to communicate with her. You can't tell her to stop the work or know if she finished and what the result of that work was.
+
+What you actually want is to give the employee a walkie-talkie to communicate with her while she handles the request. With the walkie-talkie, you can tell her to stop, or she can tell you when she encounters an error, or she can report the result of the request you gave her.
+</div>
+
+Instead of creating unmanaged tasks, use Swift concurrency to keep control of the subtasks you create. Use `TaskGroup` to manage a (group of) subtask(s). Swift provides a couple of `withTaskGroup() { group in ... }` functions to help create task groups.
 
 ```swift
-// Unnecessary Task creation
-func fetchAll() async {
-    Task { await fetchUsers() }
-    Task { await fetchPosts() }
+func doWork() async {
+
+    // this will return when all subtasks return, throw an error, or are cancelled
+    let result = try await withThrowingTaskGroup() { group in 
+        group.addTask {
+            try await self.performAsyncOperation1()  
+        }
+        group.addTask {
+            try await self.performAsyncOperation2()  
+        }
+        // wait for and collect the results of the tasks here 
+    }
 }
 
-// Better - use structured concurrency
-func fetchAll() async {
-    async let users = fetchUsers()
-    async let posts = fetchPosts()
-    await (users, posts)
+func performAsyncOperation1() async throws -> Int {
+    return 1
+}
+func performAsyncOperation2() async throws -> Int {
+    return 2
 }
 ```
 
-If you're already in an async context, prefer structured concurrency (`async let`, `TaskGroup`) over creating unstructured `Task`s. Structured concurrency handles cancellation automatically and makes the code easier to reason about.
+To collect the results of the group's child tasks, you can use a for-await-in loop:
+
+```swift
+var sum = 0
+for await result in group {
+    sum += result
+}
+// sum == 3 
+```
+
+You can learn more about [TaskGroup](https://developer.apple.com/documentation/swift/taskgroup) in the Swift documentation.
+
+#### Note about Tasks and SwiftUI.
+
+When writing a UI, you often want to start asynchronous tasks from a synchronous context. For example, you want to asynchronously load an image as a response to a UI element touch. Starting asynchronous tasks from a synchronous context is not possible in Swift. This is why you see solutions involving `Task { ... }`, which introduces unmanaged tasks.
+
+You can't use `TaskGroup` from a synchronous SwiftUI modifier because `withTaskGroup()` is an async function too and so are its related functions.
+
+As an alternative, SwiftUI offers an asynchronous modifier that you can use to start asynchronous operations. The `.task { }` modifier, which we already mentioned, accepts a `() async -> Void` function, ideal for calling other `async` functions. It is available on every `View`. It is triggered before the view appears and the tasks it creates are managed and bound to the lifecycle of the view, meaning the tasks are cancelled when the view disappears.
+
+Back to the tap-to-load-an-image example: instead of creating an unmanaged task to call an asynchronous `loadImage()` function from a synchronous `.onTap() { ... }` function, you can toggle a flag on the tap gesture and use the `task(id:)` modifier to asynchronoulsy load images when the `id` (the flag) value changes.
+
+Here is a example:
+
+```swift
+struct ContentView: View {
+    
+    @State private var shouldLoadImage = false
+    
+    var body: some View {
+        Button("Click Me !") {
+            // toggle the flag
+            shouldLoadImage = !shouldLoadImage
+        }
+        // the View manages the subtask
+        // it starts before the view is displayed 
+        // and stops when the view is hidden
+        .task(id: shouldLoadImage) {
+            // when the flag value changes, SwiftUI restarts the task
+            guard shouldLoadImage else { return }
+            await loadImage()
+        }
+    }
+}
+```
+</div>
 
   </div>
 </section>
@@ -702,8 +773,9 @@ Choose your agent and run the commands below:
 <div class="code-tabs">
   <div class="code-tabs-nav">
     <button class="active">Claude Code</button>
-    <button>Codex</button>
     <button>Amp</button>
+    <button>Codex</button>
+    <button>Kiro</button>
     <button>OpenCode</button>
   </div>
   <div class="code-tab-content active">
@@ -721,9 +793,7 @@ curl -o .claude/skills/swift-concurrency/SKILL.md https://fuckingapproachableswi
   <div class="code-tab-content">
 
 ```bash
-# Global instructions (all your projects)
-curl -o ~/.codex/AGENTS.md https://fuckingapproachableswiftconcurrency.com/SKILL.md
-# Project instructions (just this project)
+# Project instructions (recommended)
 curl -o AGENTS.md https://fuckingapproachableswiftconcurrency.com/SKILL.md
 ```
 
@@ -731,11 +801,27 @@ curl -o AGENTS.md https://fuckingapproachableswiftconcurrency.com/SKILL.md
   <div class="code-tab-content">
 
 ```bash
-# Project instructions (recommended)
+# Global instructions (all your projects)
+curl -o ~/.codex/AGENTS.md https://fuckingapproachableswiftconcurrency.com/SKILL.md
+# Project instructions (just this project)
 curl -o AGENTS.md https://fuckingapproachableswiftconcurrency.com/SKILL.md
 ```
 
   </div>
+
+  <div class="code-tab-content">
+
+```bash
+# Global rules (all your projects)
+mkdir -p ~/.kiro/steering
+curl -o ~/.kiro/steering/swift-concurrency.md https://fuckingapproachableswiftconcurrency.com/SKILL.md
+# Project rules (just this project)
+mkdir -p .kiro/steering
+curl -o .kiro/steering/swift-concurrency.md https://fuckingapproachableswiftconcurrency.com/SKILL.md
+```
+
+  </div>
+
   <div class="code-tab-content">
 
 ```bash
